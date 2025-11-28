@@ -14,8 +14,12 @@ import {
   Keyboard,
   LayoutAnimation,
   UIManager,
+  useWindowDimensions,
+  KeyboardAvoidingView,
 } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
+import { useTheme } from "../ThemeProvider";
+import { Theme } from "../theme";
 
 type Msg = { id: string; from: "user" | "bot"; text: string; ts: number };
 
@@ -23,7 +27,71 @@ if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
+function createStyles(theme: Theme) {
+  return StyleSheet.create({
+    screen: { flex: 1, backgroundColor: theme.background },
+    header: {
+      padding: 16,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.border,
+      backgroundColor: theme.card,
+    },
+    headerTitle: { fontSize: 18, fontWeight: "800", color: theme.textDark },
+    headerSub: { fontSize: 12, color: theme.textMuted, marginTop: 4 },
+
+    listContent: { padding: 12 },
+
+    msgRow: { marginVertical: 6, flexDirection: "row" },
+    msgRowLeft: { justifyContent: "flex-start" },
+    msgRowRight: { justifyContent: "flex-end" },
+
+    msgBubble: { maxWidth: "82%", padding: 10, borderRadius: 12 },
+    msgUser: { backgroundColor: theme.primary, borderTopRightRadius: 4 },
+    msgBot: { backgroundColor: theme.card, borderTopLeftRadius: 4, borderWidth: 1, borderColor: theme.border },
+
+    msgText: { fontSize: 14, lineHeight: 20 },
+    msgTextUser: { color: "#fff", fontWeight: "600" },
+    msgTextBot: { color: theme.textDark },
+
+    msgTs: { marginTop: 6, fontSize: 10, color: theme.textMuted, textAlign: "right" },
+
+    inputContainer: {
+      backgroundColor: "transparent",
+    },
+    inputWrap: {
+      flexDirection: "row",
+      alignItems: "flex-end",
+      padding: 12,
+      borderTopWidth: 1,
+      borderTopColor: theme.border,
+      backgroundColor: theme.card,
+    },
+    textInput: {
+      flex: 1,
+      minHeight: 40,
+      maxHeight: 120,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      backgroundColor: theme.softPrimary,
+      borderRadius: 12,
+      fontSize: 14,
+      color: theme.textDark,
+    },
+    sendBtn: {
+      marginLeft: 10,
+      backgroundColor: theme.primary,
+      padding: 10,
+      borderRadius: 10,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+  });
+}
+
 export default function BondAI() {
+  const { theme: activeTheme } = useTheme();
+  const styles = createStyles(activeTheme);
+
   const [value, setValue] = useState("");
   const [messages, setMessages] = useState<Msg[]>([
     { id: "1", from: "bot", text: "Hi — I'm BondAI. How can I help you and your companion today?", ts: Date.now() - 60000 },
@@ -128,9 +196,7 @@ If user asks for device-specific telemetry, recommend actions and ask to view de
       <View style={[styles.msgRow, isUser ? styles.msgRowRight : styles.msgRowLeft]}>
         <Animated.View style={[styles.msgBubble, isUser ? styles.msgUser : styles.msgBot]}>
           <Text style={[styles.msgText, isUser ? styles.msgTextUser : styles.msgTextBot]}>{item.text}</Text>
-          <Text style={styles.msgTs}>
-            {new Date(item.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-          </Text>
+          <Text style={styles.msgTs}>{new Date(item.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</Text>
         </Animated.View>
       </View>
     );
@@ -162,7 +228,7 @@ If user asks for device-specific telemetry, recommend actions and ask to view de
             onChangeText={setValue}
             style={styles.textInput}
             multiline
-            placeholderTextColor="#9aa4ab"
+            placeholderTextColor={activeTheme.textMuted}
             onFocus={() => setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 120)}
             accessibilityLabel="Message input"
             editable={!loading}
@@ -181,57 +247,3 @@ If user asks for device-specific telemetry, recommend actions and ask to view de
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: "#f6fbfb" },
-  header: { padding: 16, borderBottomWidth: 1, borderBottomColor: "#eef3f4", backgroundColor: "#fff" },
-  headerTitle: { fontSize: 18, fontWeight: "800", color: "#0f1722" },
-  headerSub: { fontSize: 12, color: "#64748b", marginTop: 4 },
-
-  listContent: { padding: 12 },
-
-  msgRow: { marginVertical: 6, flexDirection: "row" },
-  msgRowLeft: { justifyContent: "flex-start" },
-  msgRowRight: { justifyContent: "flex-end" },
-
-  msgBubble: { maxWidth: "82%", padding: 10, borderRadius: 12 },
-  msgUser: { backgroundColor: "#2c9aa6", borderTopRightRadius: 4 },
-  msgBot: { backgroundColor: "#fff", borderTopLeftRadius: 4, borderWidth: 1, borderColor: "#eef3f4" },
-
-  msgText: { fontSize: 14, lineHeight: 20 },
-  msgTextUser: { color: "#fff", fontWeight: "600" },
-  msgTextBot: { color: "#0f1722" },
-
-  msgTs: { marginTop: 6, fontSize: 10, color: "#9aa4ab", textAlign: "right" },
-
-  inputContainer: {
-    backgroundColor: "transparent",
-  },
-  inputWrap: {
-    flexDirection: "row",
-    alignItems: "flex-end",
-    padding: 12,
-    borderTopWidth: 1,
-    borderTopColor: "#eef3f4",
-    backgroundColor: "#fff",
-  },
-  textInput: {
-    flex: 1,
-    minHeight: 40,
-    maxHeight: 120,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    backgroundColor: "#f3f8f8",
-    borderRadius: 12,
-    fontSize: 14,
-    color: "#0f1722",
-  },
-  sendBtn: {
-    marginLeft: 10,
-    backgroundColor: "#2c9aa6",
-    padding: 10,
-    borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-});

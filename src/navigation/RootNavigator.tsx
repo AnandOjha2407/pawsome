@@ -1,39 +1,52 @@
 // src/navigation/RootNavigator.tsx
-import React from 'react';
-import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
+import React from "react";
+import { Platform } from "react-native";
+import { createNativeStackNavigator } from "@react-navigation/native-stack";
+import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
+import { MaterialIcons, MaterialCommunityIcons } from "@expo/vector-icons";
+import { useTheme } from "../ThemeProvider";
 
 // Screens
-import Home from '../screens/Home';
-import Pairing from '../screens/Pairing';
-import Dashboard from '../screens/Dashboard';
-import Insights from '../screens/Insights';
-import Settings from '../screens/Settings';
-import MapScreen from '../screens/MapScreen';
-import BondAI from '../screens/BondAI'; // <- new screen you will create
+import Home from "../screens/Home";
+import Pairing from "../screens/Pairing";
+import Dashboard from "../screens/Dashboard";
+import Insights from "../screens/Insights";
+import Settings from "../screens/Settings";
+import BondAI from "../screens/BondAI"; // Chat-style AI screen
 
 const Stack = createNativeStackNavigator<any>();
 const Tabs = createBottomTabNavigator<any>();
 
 function MainTabs() {
+  const { theme } = useTheme();
+
   return (
     <Tabs.Navigator
       initialRouteName="Home"
       screenOptions={{
         headerShown: false,
         tabBarShowLabel: true,
-        tabBarStyle: { height: 64, paddingBottom: 8, paddingTop: 8 },
-        tabBarActiveTintColor: '#2563eb',
-        tabBarInactiveTintColor: '#64748b',
+        tabBarStyle: {
+          height: 64,
+          paddingBottom: 8,
+          paddingTop: 8,
+          backgroundColor: theme.card ?? "#fff",
+          borderTopColor: theme.border ?? "#e5e7eb",
+          borderTopWidth: 0.5,
+          // on Android the elevation sometimes shows a shadow — keep it subtle per theme
+          elevation: 0,
+        },
+        tabBarActiveTintColor: theme.primary ?? "#2c9aa6",
+        tabBarInactiveTintColor: theme.textMuted ?? "#94a3b8",
+        tabBarLabelStyle: { fontSize: 11, fontWeight: "600" },
       }}
     >
       <Tabs.Screen
         name="Home"
         component={Home}
         options={{
-          title: 'Home',
-          tabBarLabel: 'Home',
+          title: "Home",
+          tabBarLabel: "Home",
           tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="home" color={color} size={size} />,
         }}
       />
@@ -42,8 +55,8 @@ function MainTabs() {
         name="Dashboard"
         component={Dashboard}
         options={{
-          title: 'Dashboard',
-          tabBarLabel: 'Dashboard',
+          title: "Dashboard",
+          tabBarLabel: "Dashboard",
           tabBarIcon: ({ color, size }) => <MaterialIcons name="dashboard" color={color} size={size} />,
         }}
       />
@@ -52,19 +65,9 @@ function MainTabs() {
         name="BondAI"
         component={BondAI}
         options={{
-          title: 'BondAI',
-          tabBarLabel: 'BondAI',
+          title: "BondAI",
+          tabBarLabel: "BondAI",
           tabBarIcon: ({ color, size }) => <MaterialIcons name="chat" color={color} size={size} />,
-        }}
-      />
-
-      <Tabs.Screen
-        name="Map"
-        component={MapScreen}
-        options={{
-          title: 'Map',
-          tabBarLabel: 'Map',
-          tabBarIcon: ({ color, size }) => <MaterialIcons name="map" color={color} size={size} />,
         }}
       />
 
@@ -72,8 +75,8 @@ function MainTabs() {
         name="Settings"
         component={Settings}
         options={{
-          title: 'Settings',
-          tabBarLabel: 'Settings',
+          title: "Settings",
+          tabBarLabel: "Settings",
           tabBarIcon: ({ color, size }) => <MaterialIcons name="settings" color={color} size={size} />,
         }}
       />

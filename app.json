@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "doggpt",
+    "name": "pawsome",
     "slug": "doggpt",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -8,6 +8,7 @@
     "scheme": "doggpt",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.bondai.doggpt",
@@ -15,6 +16,7 @@
         "ITSAppUsesNonExemptEncryption": false
       }
     },
+
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
@@ -28,12 +30,25 @@
         "android.permission.BLUETOOTH",
         "android.permission.BLUETOOTH_ADMIN",
         "android.permission.BLUETOOTH_CONNECT"
-      ]
+      ],
+
+      "statusBar": {
+        "hidden": true,
+        "translucent": true,
+        "backgroundColor": "transparent"
+      },
+      "navigationBar": {
+        "visible": false,
+        "behavior": "overlay-swipe",
+        "backgroundColor": "transparent"
+      }
     },
+
     "web": {
       "output": "static",
       "favicon": "./assets/images/favicon.png"
     },
+
     "plugins": [
       "expo-router",
       [
@@ -50,15 +65,18 @@
       ],
       "react-native-ble-plx"
     ],
+
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
     },
+
     "extra": {
       "router": {},
       "eas": {
         "projectId": "aee8757a-4d44-4101-9182-f74cb40c72e2"
-      }
+      },
+      "API_BASE": "https://doggpt-demo.loca.lt"
     }
   }
 }

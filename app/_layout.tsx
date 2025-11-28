@@ -7,9 +7,11 @@ export default function RootLayout() {
         name="index"
         options={{
           title: "BondAI",
-          headerTitleAlign: "left", // 👈 moves title to extreme left
-          headerStyle: { backgroundColor: "#2c9aa6" },
-          headerTintColor: "#fff",
+          headerTitleAlign: "left",
+          headerStyle: {
+            backgroundColor: "#712900ff",   // ← same maroon as your button primary
+          },
+          headerTintColor: "#047c9dff",      // matches theme.textDark
           headerTitleStyle: {
             fontWeight: "700",
             fontSize: 20,
