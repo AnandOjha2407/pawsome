@@ -36,8 +36,8 @@ function MainTabs() {
           // on Android the elevation sometimes shows a shadow — keep it subtle per theme
           elevation: 0,
         },
-        tabBarActiveTintColor: theme.primary ?? "#2c9aa6",
-        tabBarInactiveTintColor: theme.textMuted ?? "#94a3b8",
+        tabBarActiveTintColor: theme.primary ?? "#00c6dcff",
+        tabBarInactiveTintColor: theme.textMuted ?? "#ffffffff",
         tabBarLabelStyle: { fontSize: 11, fontWeight: "600" },
       }}
     >

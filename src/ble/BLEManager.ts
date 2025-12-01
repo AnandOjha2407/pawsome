@@ -13,7 +13,9 @@ class SimpleEmitter {
       delete this.listeners[event];
       return;
     }
-    this.listeners[event] = (this.listeners[event] || []).filter((l) => l !== fn);
+    this.listeners[event] = (this.listeners[event] || []).filter(
+      (l) => l !== fn
+    );
     if (this.listeners[event].length === 0) delete this.listeners[event];
   }
 
@@ -75,14 +77,27 @@ class BLEManager extends SimpleEmitter {
   dogCalories = 120;
 
   // history and sleep
-  hrHistory: number[] = Array.from({ length: 7 }, () => 60 + Math.floor(Math.random() * 40));
-  stepsHistory: number[] = Array.from({ length: 7 }, () => 1000 + Math.floor(Math.random() * 6000));
-  restVsActiveHistory: { rest: number; active: number }[] =
-    Array.from({ length: 7 }, () => ({ rest: 600, active: 180 }));
+  hrHistory: number[] = Array.from(
+    { length: 7 },
+    () => 60 + Math.floor(Math.random() * 40)
+  );
+  stepsHistory: number[] = Array.from(
+    { length: 7 },
+    () => 1000 + Math.floor(Math.random() * 6000)
+  );
+  restVsActiveHistory: { rest: number; active: number }[] = Array.from(
+    { length: 7 },
+    () => ({ rest: 600, active: 180 })
+  );
   sleepSummary = { lastNight: { deep: 120, light: 240 }, quality: "Good" };
 
   // training sessions
-  sessions: { id: string; date: string; durationMin: number; notes?: string }[] = [];
+  sessions: {
+    id: string;
+    date: string;
+    durationMin: number;
+    notes?: string;
+  }[] = [];
 
   // firmware + logs
   firmwareVersion = "mock-1.0.0";
@@ -106,7 +121,11 @@ class BLEManager extends SimpleEmitter {
 
   constructor() {
     super();
-    this.logs.push(`[${new Date().toISOString()}] BLEManager initialized (mockMode=${this.mockMode})`);
+    this.logs.push(
+      `[${new Date().toISOString()}] BLEManager initialized (mockMode=${
+        this.mockMode
+      })`
+    );
   }
 
   // -------------------------------------------------------------
@@ -132,9 +151,11 @@ class BLEManager extends SimpleEmitter {
     if (!this.mockMode) return;
     if (this._simInterval) return;
 
-    this._simTarget = target ?? (this.assignedProfile ?? "human");
+    this._simTarget = target ?? this.assignedProfile ?? "human";
     this.logs.push(
-      `[${new Date().toISOString()}] simulateData started (target=${this._simTarget})`
+      `[${new Date().toISOString()}] simulateData started (target=${
+        this._simTarget
+      })`
     );
 
     this._simInterval = setInterval(() => {
@@ -176,8 +197,14 @@ class BLEManager extends SimpleEmitter {
     this.rssi = -60 + Math.floor(Math.random() * 10);
 
     // human: small random walk (bounded)
-    this.heartRate = Math.max(45, Math.min(160, Math.round(this.heartRate + (Math.random() * 6 - 3))));
-    this.spO2 = Math.max(90, Math.min(100, Math.round(this.spO2 + (Math.random() > 0.92 ? -1 : 0))));
+    this.heartRate = Math.max(
+      45,
+      Math.min(160, Math.round(this.heartRate + (Math.random() * 6 - 3)))
+    );
+    this.spO2 = Math.max(
+      90,
+      Math.min(100, Math.round(this.spO2 + (Math.random() > 0.92 ? -1 : 0)))
+    );
     this.steps += Math.floor(Math.random() * 30);
     this.battery = Math.max(1, this.battery - (Math.random() < 0.02 ? 1 : 0));
     this.activeMinutes += Math.random() > 0.8 ? 1 : 0;
@@ -185,10 +212,19 @@ class BLEManager extends SimpleEmitter {
     this.calories = Math.round(this.calories + Math.random() * 5);
 
     // dog: small random walk (bounded)
-    this.dogHeartRate = Math.max(50, Math.min(180, Math.round(this.dogHeartRate + (Math.random() * 6 - 3))));
-    this.dogSpO2 = Math.max(90, Math.min(100, Math.round(this.dogSpO2 + (Math.random() > 0.95 ? -1 : 0))));
+    this.dogHeartRate = Math.max(
+      50,
+      Math.min(180, Math.round(this.dogHeartRate + (Math.random() * 6 - 3)))
+    );
+    this.dogSpO2 = Math.max(
+      90,
+      Math.min(100, Math.round(this.dogSpO2 + (Math.random() > 0.95 ? -1 : 0)))
+    );
     this.dogSteps += Math.floor(Math.random() * 25);
-    this.dogBattery = Math.max(1, this.dogBattery - (Math.random() < 0.02 ? 1 : 0));
+    this.dogBattery = Math.max(
+      1,
+      this.dogBattery - (Math.random() < 0.02 ? 1 : 0)
+    );
     if (Math.random() > 0.9) {
       const list = ["low", "medium", "high"] as const;
       this.activityLevel = list[Math.floor(Math.random() * list.length)];
@@ -214,8 +250,18 @@ class BLEManager extends SimpleEmitter {
     }
 
     // alerts
-    if (this.battery < 15) this.emit("alert", { type: "low_battery", target: "human", battery: this.battery });
-    if (this.dogBattery < 15) this.emit("alert", { type: "low_battery", target: "dog", battery: this.dogBattery });
+    if (this.battery < 15)
+      this.emit("alert", {
+        type: "low_battery",
+        target: "human",
+        battery: this.battery,
+      });
+    if (this.dogBattery < 15)
+      this.emit("alert", {
+        type: "low_battery",
+        target: "dog",
+        battery: this.dogBattery,
+      });
     if (this.activityLevel === "low" && Math.random() > 0.995) {
       this.emit("alert", { type: "inactivity", target: "dog" });
     }
@@ -233,13 +279,17 @@ class BLEManager extends SimpleEmitter {
     const humanHRVScore = this.mapTo100(humanHRV, 10, 80);
     const humanO2Score = this.mapTo100(this.spO2, 92, 100);
     // weighted combine
-    this.humanHealthScore = Math.round((humanHRScore * 0.4) + (humanHRVScore * 0.35) + (humanO2Score * 0.25));
+    this.humanHealthScore = Math.round(
+      humanHRScore * 0.4 + humanHRVScore * 0.35 + humanO2Score * 0.25
+    );
 
     // Dog health: combine dog HR, dog HRV, dog SpO2
     const dogHRScore = this.mapTo100(100 - (this.dogHeartRate - 40), 0, 100);
     const dogHRVScore = this.mapTo100(dogHRV, 10, 70);
     const dogO2Score = this.mapTo100(this.dogSpO2, 92, 100);
-    this.dogHealthScore = Math.round((dogHRScore * 0.45) + (dogHRVScore * 0.25) + (dogO2Score * 0.3));
+    this.dogHealthScore = Math.round(
+      dogHRScore * 0.45 + dogHRVScore * 0.25 + dogO2Score * 0.3
+    );
 
     // Bond score: measure synchrony and calm alignment between human & dog
     // Simple approach:
@@ -251,11 +301,14 @@ class BLEManager extends SimpleEmitter {
     const healthAvg = (this.humanHealthScore + this.dogHealthScore) / 2;
     // activity alignment: if both activityPct/dog steps relative indicate similar state
     const humanActive = this.activityPct > 0.35 || this.activeMinutes > 10;
-    const dogActive = this.activityLevel === "high" || this.dogSteps % 1000 > 200;
+    const dogActive =
+      this.activityLevel === "high" || this.dogSteps % 1000 > 200;
     const activityMatch = humanActive === dogActive ? 100 : 50;
 
     // combine into bond (0..100)
-    this.bondScore = Math.round((hrSyncScore * 0.45) + (healthAvg * 0.35) + (activityMatch * 0.2));
+    this.bondScore = Math.round(
+      (this.humanHealthScore + this.dogHealthScore) / 2
+    );
 
     // Backwards compatibility
     this.sleepScore = this.bondScore;
@@ -340,7 +393,9 @@ class BLEManager extends SimpleEmitter {
       sleepSummary: this.sleepSummary,
     });
 
-    this.logs.push(`[${new Date().toISOString()}] manualFetch -> history emitted`);
+    this.logs.push(
+      `[${new Date().toISOString()}] manualFetch -> history emitted`
+    );
   }
 
   // -------------------------------------------------------------
@@ -359,7 +414,9 @@ class BLEManager extends SimpleEmitter {
 
     this.sessions.unshift(session);
     this.emit("training_started", session);
-    this.logs.push(`[${new Date().toISOString()}] training_started ${session.id}`);
+    this.logs.push(
+      `[${new Date().toISOString()}] training_started ${session.id}`
+    );
   }
 
   stopTrainingSession() {
@@ -370,7 +427,9 @@ class BLEManager extends SimpleEmitter {
     if (session) session.durationMin = 10 + Math.floor(Math.random() * 40);
 
     this.emit("training_stopped", session);
-    this.logs.push(`[${new Date().toISOString()}] training_stopped ${session?.id}`);
+    this.logs.push(
+      `[${new Date().toISOString()}] training_stopped ${session?.id}`
+    );
   }
 
   sendCue(type: "vibrate" | "beep" | "tone" = "vibrate") {

@@ -9,9 +9,9 @@ export default function RootLayout() {
           title: "BondAI",
           headerTitleAlign: "left",
           headerStyle: {
-            backgroundColor: "#712900ff",   // ← same maroon as your button primary
+            backgroundColor: "#000d28ff",   // ← same maroon as your button primary
           },
-          headerTintColor: "#047c9dff",      // matches theme.textDark
+          headerTintColor: "#fafeffff",      // matches theme.textDark
           headerTitleStyle: {
             fontWeight: "700",
             fontSize: 20,

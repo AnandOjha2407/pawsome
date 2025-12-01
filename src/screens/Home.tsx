@@ -626,15 +626,17 @@ function AnimatedFeatureCard({
 
 /* ---------- Main Home component (simplified connect UX) ---------- */
 export default function Home({ navigation }: Props) {
-  // ---------- THREE RING DISPLAY WITH SLIDE + GLOW + SUGGESTIONS ----------
+  // ---------- THREE RING DISPLAY WITH TRIANGULAR LAYOUT + CENTER ENLARGE ----------
+
   const [ringScores, setRingScores] = useState({
-    sleep: 0,
-    recovery: 0,
-    strain: 0,
+    sleep: 0, // Bond
+    recovery: 0, // Dog Health
+    strain: 0, // Human Health
   });
+
   const [selected, setSelected] = useState<number | null>(null);
 
-  // listen for BLE data
+  // BLE listener
   useEffect(() => {
     const fn = (data: any) => {
       if (!data) return;
@@ -650,28 +652,51 @@ export default function Home({ navigation }: Props) {
 
   // sizes
   const baseSize = 125;
-  const enlarge = 1.1;
+  const enlarge = 1.25;
   const stroke = 5;
 
-  // animations
+  // glow
+  const glow = useRef(new Animated.Value(0)).current;
+
+  // ring scale
   const ringScale = [
     useRef(new Animated.Value(1)).current,
     useRef(new Animated.Value(1)).current,
     useRef(new Animated.Value(1)).current,
   ];
 
-  const ringX = [
-    useRef(new Animated.Value(0)).current,
-    useRef(new Animated.Value(0)).current,
-    useRef(new Animated.Value(0)).current,
+  // ► NEW: Triangular layout target positions
+  const TRI_POS: Record<number, { x: number; y: number }> = {
+    0: { x: 0, y: -110 }, // Bond
+    1: { x: -110, y: 50 }, // Dog
+    2: { x: 110, y: 50 }, // Human
+  };
+
+  const CENTER = { x: 0, y: 0 };
+
+  // ► NEW: Position animators (x,y per ring)
+  const ringPos = [
+    {
+      x: useRef(new Animated.Value(TRI_POS[0].x)).current,
+      y: useRef(new Animated.Value(TRI_POS[0].y)).current,
+    },
+
+    {
+      x: useRef(new Animated.Value(TRI_POS[1].x)).current,
+      y: useRef(new Animated.Value(TRI_POS[1].y)).current,
+    },
+
+    {
+      x: useRef(new Animated.Value(TRI_POS[2].x)).current,
+      y: useRef(new Animated.Value(TRI_POS[2].y)).current,
+    },
   ];
 
-  // glow pulse
-  const glow = useRef(new Animated.Value(0)).current;
-
+  // Glow animation
   useEffect(() => {
     if (selected === null) return;
     glow.setValue(0);
+
     Animated.loop(
       Animated.sequence([
         Animated.timing(glow, {
@@ -686,72 +711,68 @@ export default function Home({ navigation }: Props) {
         }),
       ])
     ).start();
+
     return () => glow.stopAnimation();
   }, [selected]);
 
-  // ring selection
+  // ► NEW: On-select logic
   function onSelect(i: number) {
     const now = i === selected ? null : i;
     setSelected(now);
 
-    ringScale.forEach((a, idx) => {
-      Animated.timing(a, {
+    // Scale
+    ringScale.forEach((scale, idx) => {
+      Animated.timing(scale, {
         toValue: idx === now ? enlarge : 1,
-        duration: 250,
+        duration: 260,
         useNativeDriver: true,
       }).start();
     });
 
-    ringX.forEach((a, idx) => {
-      Animated.timing(a, {
-        toValue: idx === now ? -7 : 0,
-        duration: 250,
+    // Position (x,y)
+    ringPos.forEach((pos, idx) => {
+      Animated.timing(pos.x, {
+        toValue: idx === now ? CENTER.x : TRI_POS[idx].x,
+        duration: 260,
+        useNativeDriver: true,
+      }).start();
+      Animated.timing(pos.y, {
+        toValue: idx === now ? CENTER.y : TRI_POS[idx].y,
+        duration: 260,
         useNativeDriver: true,
       }).start();
     });
   }
 
-  // suggestion text logic — NEW extended suggestions
-function getSuggestion(i: number, value: number): string {
-  const v = Number(value) || 0;
+  // Suggestion logic
+  function getSuggestion(i: number, v: number) {
+    v = Number(v) || 0;
 
-  // -------------------------
-  // 0 → Bond Score
-  // -------------------------
-  if (i === 0) {
-    if (v < 40)
-      return "Bond score is low. Try calm interactions: gentle petting, slow walks, and removing distractions during bonding time.";
-    if (v < 70)
-      return "Bond is moderate. Improve connection through short play sessions, consistent routines, and positive reinforcement.";
-    return "Bond is strong! Keep nurturing it with shared activities, consistent attention, and calm affectionate moments.";
+    if (i === 0) {
+      if (v < 40)
+        return "Bond is weak. Try calm interactions and shared routines.";
+      if (v < 70)
+        return "Bond is growing. Add more consistent play or training.";
+      return "Bond is strong! Keep up your shared activities.";
+    }
+
+    if (i === 1) {
+      if (v < 40) return "Dog health is low. Ensure hydration & rest.";
+      if (v < 70) return "Dog health is average. Light walks are okay.";
+      return "Dog health is great! Ideal time for longer walks or play.";
+    }
+
+    if (i === 2) {
+      if (v < 40) return "Your health is low. Rest & hydrate.";
+      if (v < 70)
+        return "Your health is moderate. Light stretching recommended.";
+      return "You're healthy! Great time for active play or workouts.";
+    }
+
+    return "";
   }
 
-  // -------------------------
-  // 1 → Dog Health
-  // -------------------------
-  if (i === 1) {
-    if (v < 40)
-      return "Dog health is low. Ensure hydration, check appetite, allow rest, and avoid intense activity today.";
-    if (v < 70)
-      return "Dog health is okay. Light exercise is fine. Watch for fatigue or overstimulation and keep routines stable.";
-    return "Dog health is strong! Ideal time for training, longer walks, or engaging activities.";
-  }
-
-  // -------------------------
-  // 2 → Human Health
-  // -------------------------
-  if (i === 2) {
-    if (v < 40)
-      return "Your health is low. Prioritize rest, hydration, and reducing stress. Avoid heavy physical exertion today.";
-    if (v < 70)
-      return "Your health is moderate. Light movement or stretching is good. Maintain balanced nutrition and hydration.";
-    return "You're in good health! Great time for productive tasks, workouts, or active play with your dog.";
-  }
-
-  return "";
-}
-
-
+  // -------------------------------- RING COMPONENT --------------------------------
   function Ring({ i, label, value, color }: any) {
     const size = baseSize;
     const center = size / 2;
@@ -759,127 +780,127 @@ function getSuggestion(i: number, value: number): string {
     const circ = 2 * Math.PI * radius;
     const offset = circ * (1 - value / 100);
 
-    const glowSize = glow.interpolate({
-      inputRange: [0, 1],
-      outputRange: [0, 14],
-    });
-
     return (
-      <View
-        style={{ width: "100%", alignItems: "center", flexDirection: "row" }}
+      <Animated.View
+        style={{
+          position: "absolute",
+          transform: [
+            { translateX: ringPos[i].x },
+            { translateY: ringPos[i].y },
+            { scale: ringScale[i] },
+          ],
+          alignItems: "center",
+        }}
       >
-        {/* RING */}
         <Pressable onPress={() => onSelect(i)}>
-          <Animated.View
-            style={{
-              transform: [{ scale: ringScale[i] }, { translateX: ringX[i] }],
-            }}
-          >
-            {/* Glow */}
-            {selected === i && (
-              <Animated.View
-                style={{
-                  position: "absolute",
-                  width: size,
-                  height: size,
-                  borderRadius: 999,
-                  backgroundColor: color + "33",
-
-                  transform: [
-                    {
-                      scale: glow.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [1, 1.22],
-                      }),
-                    },
-                  ],
-                }}
-              />
-            )}
-
-            <Svg width={size} height={size}>
-              {/* background arc */}
-              <Circle
-                cx={center}
-                cy={center}
-                r={radius}
-                stroke="rgba(255,255,255,0.20)"
-                strokeWidth={stroke}
-                fill="none"
-              />
-
-              {/* progress arc */}
-              <Circle
-                cx={center}
-                cy={center}
-                r={radius}
-                stroke={color}
-                strokeWidth={stroke}
-                fill="none"
-                strokeDasharray={circ}
-                strokeDashoffset={offset}
-                strokeLinecap="round"
-                rotation="-90"
-                origin={`${center}, ${center}`}
-              />
-            </Svg>
-
-            {/* centered text */}
-            <View
+          {/* Glow */}
+          {selected === i && (
+            <Animated.View
               style={{
                 position: "absolute",
                 width: size,
                 height: size,
-                justifyContent: "center",
-                alignItems: "center",
+                borderRadius: size / 2,
+                backgroundColor: color + "33",
+                transform: [
+                  {
+                    scale: glow.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [1, 1.22], // numeric only
+                    }),
+                  },
+                ],
               }}
-            >
-              <Text style={{ color: "white", fontSize: 20, fontWeight: "900" }}>
-                {value}%
-              </Text>
-              <Text style={{ color: "white", fontSize: 12, opacity: 0.9 }}>
-                {label}
-              </Text>
-            </View>
-          </Animated.View>
+            />
+          )}
+
+          <Svg width={size} height={size}>
+            <Circle
+              cx={center}
+              cy={center}
+              r={radius}
+              stroke="rgba(132, 132, 132, 0.2)"
+              strokeWidth={stroke}
+              fill="none"
+            />
+            <Circle
+              cx={center}
+              cy={center}
+              r={radius}
+              stroke={color}
+              strokeWidth={stroke}
+              fill="none"
+              strokeDasharray={circ}
+              strokeDashoffset={offset}
+              strokeLinecap="round"
+              rotation="-90"
+              origin={`${center}, ${center}`}
+            />
+          </Svg>
+
+          {/* Center text */}
+          <View
+            style={{
+              position: "absolute",
+              width: size,
+              height: size,
+              justifyContent: "center",
+              alignItems: "center",
+            }}
+          >
+            <Text style={{ color: "white", fontSize: 20, fontWeight: "900" }}>
+              {value}%
+            </Text>
+            <Text style={{ color: "white", fontSize: 12, opacity: 0.9 }}>
+              {label}
+            </Text>
+          </View>
         </Pressable>
 
-        {/* SUGGESTION BUBBLE — updated spacing + bigger box + more text */}
+        {/* Suggestion bubble */}
         {selected === i && (
           <Animated.View
             style={{
-              marginLeft: 12, // LESS SPACE NOW
-              paddingVertical: 12,
+              marginTop: 16,
+              paddingVertical: 10,
               paddingHorizontal: 14,
-              maxWidth: "55%", // BIGGER BUBBLE
-              backgroundColor: "rgba(255,255,255,0.12)",
+              backgroundColor: "rgba(255,255,255,0.15)",
               borderRadius: 12,
+              maxWidth: 280,
+               width: 280,
               opacity: ringScale[i].interpolate({
                 inputRange: [1, enlarge],
                 outputRange: [0, 1],
               }),
-              transform: [
-                {
-                  translateX: ringScale[i].interpolate({
-                    inputRange: [1, enlarge],
-                    outputRange: [20, 0], // subtle slide-in
-                  }),
-                },
-              ],
+              zIndex: 9999,
+              elevation: 5,
+              position: "absolute", // must be absolute
+              top: size + 5, // appear below the ring
+              left: "25%",
+              transform: [{ translateX: -110 }], // center horizontally
             }}
           >
-            <Text style={{ color: "white", fontSize: 14, lineHeight: 19 }}>
+            <Text style={{ color: "white", fontSize: 11, lineHeight: 18 }}>
               {getSuggestion(i, value)}
             </Text>
           </Animated.View>
         )}
-      </View>
+      </Animated.View>
     );
   }
 
-  // final layout
+  // -------------------------------- FINAL TRIANGULAR DISPLAY -------------------------------
+
   const ThreeRingDisplay = (
-    <View style={{ alignItems: "center", gap: 26 }}>
+    <View
+      style={{
+        width: 300,
+        height: 330,
+        alignItems: "center",
+        justifyContent: "center",
+        marginTop: 10,
+      }}
+    >
       <Ring i={0} label="Bond Score" value={ringScores.sleep} color="#6C63FF" />
       <Ring
         i={1}
@@ -892,12 +913,11 @@ function getSuggestion(i: number, value: number): string {
         label="Human Health"
         value={ringScores.strain}
         color="#FB7185"
-        extraStyle={{ marginBottom: 30 }} // NEW
       />
     </View>
   );
-
-  ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
   const { theme: activeTheme } = useTheme(); // ← cleaned version
   const styles = useMemo(() => createStyles(activeTheme), [activeTheme]);
@@ -1370,7 +1390,14 @@ function getSuggestion(i: number, value: number): string {
         </View>
 
         {/* Bond Score Rings - 3 separate circles */}
-        <View style={{ marginTop: 18, gap: 22, alignItems: "center",marginBottom: 20 }}>
+        <View
+          style={{
+            marginTop: 18,
+            gap: 22,
+            alignItems: "center",
+            marginBottom: 20,
+          }}
+        >
           {ThreeRingDisplay}
         </View>
 
