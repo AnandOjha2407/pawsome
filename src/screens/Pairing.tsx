@@ -1,5 +1,6 @@
 // src/screens/Pairing.tsx
-import React, { useEffect, useState } from 'react';
+
+import React, { useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -8,122 +9,212 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
+  ActionSheetIOS,
   Platform,
-} from 'react-native';
-import { MaterialIcons } from '@expo/vector-icons';
-import { bleManager } from '../ble/BLEManager';
+} from "react-native";
+import { MaterialIcons } from "@expo/vector-icons";
+import { useRoute } from "@react-navigation/native";
+import { useRouter } from "expo-router";
+import { bleManager } from "../ble/BLEManager";
+import { useTheme } from "../ThemeProvider";
+import { Theme } from "../theme";
+import { savePairedDevice } from "../storage/pairedDevices";
 
 type DeviceItem = {
   id: string;
-  name: string;
+  name?: string | null;
   mac?: string;
-  rssi?: number;
-  isMock?: boolean;
+  rssi?: number | null;
 };
 
 export default function Pairing() {
+  const { theme: activeTheme } = useTheme();
+  const styles = createStyles(activeTheme);
+  const router = useRouter();
+  const route = useRoute<any>();
+  const preferredTarget = route?.params?.target as
+    | "dog"
+    | "human"
+    | "vest"
+    | undefined;
+
   const [isScanning, setIsScanning] = useState(false);
   const [devices, setDevices] = useState<DeviceItem[]>([]);
   const [btOn, setBtOn] = useState(true);
 
-  // small built-in mock list so UI works without scanning
-  const mockDevices: DeviceItem[] = [
-    { id: 'mock-1', name: 'GTS10 Mock (Human)', mac: 'AA:BB:CC:11:22:33', rssi: -45, isMock: true },
-    { id: 'mock-2', name: 'GTL1 Mock (Dog)', mac: 'AA:BB:CC:44:55:66', rssi: -60, isMock: true },
-  ];
-
+  // --------------------------------------------------------------------------------------
+  // INIT
+  // --------------------------------------------------------------------------------------
   useEffect(() => {
-    // If bleManager exposes a isBluetoothOn flag, use it — otherwise assume true for mock
-    // (If you later integrate real SDK, wire this to the SDK state)
-    if ((bleManager as any).isBluetoothOn !== undefined) {
-      setBtOn((bleManager as any).isBluetoothOn);
-    } else {
-      setBtOn(true);
-    }
+    // For now assume Bluetooth is ON
+    setBtOn(true);
 
-    // If bleManager exposes discovered devices, listen to it
-    const onData = (d: any) => {
-      // If your real BLE manager emits devices, parse them here
-      // This keeps code future-proof for real SDK integration.
-    };
+    const onData = () => {};
+    bleManager.on?.("data", onData);
 
-    bleManager.on?.('data', onData); // safe - mock supports on/off
     return () => {
-      bleManager.off?.('data', onData);
+      if (bleManager.off) bleManager.off("data", onData);
     };
   }, []);
 
+  // --------------------------------------------------------------------------------------
+  // SCANNING
+  // --------------------------------------------------------------------------------------
   const startScan = () => {
+    setDevices([]);
     setIsScanning(true);
-    setDevices([]); // clear old
 
-    // If you have real scanning API later, call it here:
-    // bleManager.startScanning();
-    // For mock: show the built-in list after a tiny delay
+    bleManager.startScan((d) => {
+      setDevices((prev) => {
+        if (prev.some((x) => x.id === d.id)) return prev;
+        return [...prev, d];
+      });
+    });
+
+    // Auto-stop after 8 sec
     setTimeout(() => {
-      setDevices(mockDevices);
-      setIsScanning(false);
-    }, 700);
+      stopScan();
+    }, 8000);
   };
 
   const stopScan = () => {
     setIsScanning(false);
-    // bleManager.stopScanning(); // later, when real SDK added
+    bleManager.stopScan();
   };
 
-  const connectToDevice = (device: DeviceItem) => {
-    // If mock — call bleManager.connect()
-    try {
-      // if your real BLEManager.connect accepts a device model, adapt this call
-      // For now the mock bleManager.connect() toggles connection and emits events
-      bleManager.connect();
-      Alert.alert('Connecting', `Connecting to ${device.name}`);
-      // Optionally set a connected device on bleManager if your mock supports it:
-      if ((bleManager as any).connectedDevice === undefined) {
-        (bleManager as any).connectedDevice = { name: device.name, mac: device.mac, rssi: device.rssi };
-      }
-    } catch (err) {
-      console.warn('Connect failed', err);
-      Alert.alert('Error', 'Failed to connect. Check logs.');
+  useEffect(() => {
+    if (preferredTarget && !isScanning) {
+      startScan();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preferredTarget]);
+
+  // --------------------------------------------------------------------------------------
+  // ROLE SELECTION POPUP (Option C)
+  // --------------------------------------------------------------------------------------
+  const pickRole = (dev: DeviceItem) => {
+    if (Platform.OS === "ios") {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          title: `Select Device Type`,
+          options: ["Human (GTS10)", "Dog (GTL1)", "Vest (ESP32)", "Cancel"],
+          cancelButtonIndex: 3,
+        },
+        (index) => {
+          if (index === 0) finalConnect(dev, "human");
+          if (index === 1) finalConnect(dev, "dog");
+          if (index === 2) finalConnect(dev, "vest");
+        }
+      );
+    } else {
+      // Android fallback — simple Alert-based picker
+      Alert.alert(
+        "Select Device Type",
+        `What device is this?\n\n${dev.name ?? dev.id}`,
+        [
+          { text: "Human (GTS10)", onPress: () => finalConnect(dev, "human") },
+          { text: "Dog (GTL1)", onPress: () => finalConnect(dev, "dog") },
+          { text: "Vest (ESP32)", onPress: () => finalConnect(dev, "vest") },
+          { text: "Cancel", style: "cancel" },
+        ]
+      );
     }
   };
 
+  // --------------------------------------------------------------------------------------
+  // FINAL CONNECT (matches your BLEManager)
+  // --------------------------------------------------------------------------------------
+  const finalConnect = async (
+    device: DeviceItem,
+    type: "human" | "dog" | "vest"
+  ) => {
+    try {
+      const descriptor = {
+        ...device,
+        mac: device.mac ?? device.id,
+        name: device.name ?? `${type} device`,
+        rssi: device.rssi ?? -60,
+      };
+
+      bleManager.assignDeviceType(descriptor, type);
+      await bleManager.connectToScannedDevice(descriptor, type);
+      await savePairedDevice(type, descriptor);
+
+      Alert.alert(
+        "Connected",
+        `Connected to ${descriptor.name} as ${type.toUpperCase()}`
+      );
+    } catch (err) {
+      console.warn("Connect failed", err);
+      Alert.alert("Error", "Failed to connect. Check logs.");
+    }
+  };
+
+  // --------------------------------------------------------------------------------------
+  // RENDER LIST ROW
+  // --------------------------------------------------------------------------------------
   const renderItem = ({ item }: { item: DeviceItem }) => (
-    <TouchableOpacity style={styles.deviceRow} onPress={() => connectToDevice(item)}>
+    <TouchableOpacity
+      style={styles.deviceRow}
+      onPress={() => pickRole(item)}
+    >
       <View style={{ flex: 1 }}>
-        <Text style={styles.deviceName}>{item.name}</Text>
-        <Text style={styles.deviceSub}>{item.mac ?? 'No MAC'}</Text>
+        <Text style={styles.deviceName}>{item.name ?? "Unknown Device"}</Text>
+        <Text style={styles.deviceSub}>{item.mac ?? item.id}</Text>
       </View>
+
       <View style={styles.rssiWrap}>
-        <Text style={styles.rssiText}>{item.rssi ?? '-'}</Text>
+        <Text style={styles.rssiText}>{item.rssi ?? "-"}</Text>
       </View>
     </TouchableOpacity>
   );
 
+  // --------------------------------------------------------------------------------------
+  // UI
+  // --------------------------------------------------------------------------------------
   return (
     <View style={styles.screen}>
       <View style={styles.header}>
         <Text style={styles.title}>Find Your Device</Text>
-        <Text style={styles.subtitle}>Make sure Bluetooth is enabled on your phone</Text>
+        <Text style={styles.subtitle}>Tap a device to select type</Text>
+        <View style={styles.headerActions}>
+          <TouchableOpacity onPress={() => router.push("/(tabs)/dashboard")}>
+            <Text style={styles.link}>Open Dashboard</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => router.push("/(tabs)/settings")}>
+            <Text style={styles.link}>Go to Settings</Text>
+          </TouchableOpacity>
+        </View>
+        {preferredTarget ? (
+          <Text style={styles.preferred}>
+            Prefers {preferredTarget === "dog" ? "Dog collar" : preferredTarget === "human" ? "Human wearable" : "Therapy vest"}
+          </Text>
+        ) : null}
       </View>
 
       {!btOn ? (
         <View style={styles.center}>
-          <MaterialIcons name="bluetooth-disabled" size={56} color="#999" />
+          <MaterialIcons
+            name="bluetooth-disabled"
+            size={56}
+            color={activeTheme.textMuted}
+          />
           <Text style={styles.centerText}>Bluetooth is Off</Text>
-          <Text style={styles.centerSub}>Enable Bluetooth to scan for devices</Text>
         </View>
       ) : (
         <>
           <View style={styles.controls}>
             {!isScanning ? (
               <TouchableOpacity style={styles.scanBtn} onPress={startScan}>
-                <MaterialIcons name="search" size={18} color="#fff" />
+                <MaterialIcons name="search" size={18} color={activeTheme.textOnPrimary} />
                 <Text style={styles.scanText}> Scan for devices</Text>
               </TouchableOpacity>
             ) : (
-              <TouchableOpacity style={[styles.scanBtn, styles.scanBtnStop]} onPress={stopScan}>
-                <ActivityIndicator color="#fff" style={{ marginRight: 8 }} />
+              <TouchableOpacity
+                style={[styles.scanBtn, styles.scanBtnStop]}
+                onPress={stopScan}
+              >
+                <ActivityIndicator color={activeTheme.textOnPrimary} style={{ marginRight: 8 }} />
                 <Text style={styles.scanText}> Scanning…</Text>
               </TouchableOpacity>
             )}
@@ -136,7 +227,9 @@ export default function Pairing() {
             ListEmptyComponent={
               <View style={styles.empty}>
                 <Text style={styles.emptyText}>No devices found</Text>
-                <Text style={styles.emptySub}>Try scanning again or use the mock devices</Text>
+                <Text style={styles.emptySub}>
+                  Start scan or move closer to the device.
+                </Text>
               </View>
             }
             contentContainerStyle={{ padding: 12 }}
@@ -147,47 +240,62 @@ export default function Pairing() {
   );
 }
 
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: '#f6fbfb' },
-  header: { padding: 18 },
-  title: { fontSize: 22, fontWeight: '700', color: '#0f1722' },
-  subtitle: { color: '#64748b', marginTop: 6 },
+// --------------------------------------------------------------------------------------
+// STYLES
+// --------------------------------------------------------------------------------------
+const createStyles = (theme: Theme) =>
+  StyleSheet.create({
+    screen: { flex: 1, backgroundColor: theme.background },
 
-  center: { alignItems: 'center', padding: 18 },
-  centerText: { fontSize: 18, marginTop: 12, color: '#333' },
-  centerSub: { color: '#777', marginTop: 6 },
+    header: { padding: 18 },
+    title: { fontSize: 22, fontWeight: "700", color: theme.textDark },
+    subtitle: { color: theme.textMuted, marginTop: 6 },
+    headerActions: { flexDirection: "row", gap: 16, marginTop: 12 },
+    link: { color: theme.primary, fontWeight: "700" },
+    preferred: { color: theme.textMuted, marginTop: 8, fontSize: 12 },
 
-  controls: { paddingHorizontal: 12, paddingBottom: 8, flexDirection: 'row' },
-  scanBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#2c9aa6',
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 10,
-  },
-  scanBtnStop: { backgroundColor: '#e07b39' },
-  scanText: { color: '#fff', fontWeight: '700' },
+    center: { alignItems: "center", padding: 18 },
+    centerText: { fontSize: 18, marginTop: 12, color: theme.textDark },
 
-  deviceRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    padding: 14,
-    borderRadius: 12,
-    marginBottom: 10,
-    shadowColor: '#000',
-    shadowOpacity: 0.03,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-  },
-  deviceName: { fontWeight: '700', color: '#0f1722' },
-  deviceSub: { color: '#64748b', marginTop: 4 },
+    controls: { paddingHorizontal: 12, paddingBottom: 8, flexDirection: "row" },
 
-  rssiWrap: { marginLeft: 8, paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8, backgroundColor: '#eef7f7' },
-  rssiText: { color: '#2c9aa6', fontWeight: '700' },
+    scanBtn: {
+      flexDirection: "row",
+      alignItems: "center",
+      backgroundColor: theme.primary,
+      paddingVertical: 10,
+      paddingHorizontal: 14,
+      borderRadius: 10,
+    },
+    scanBtnStop: { backgroundColor: theme.orange },
+    scanText: { color: theme.textOnPrimary, fontWeight: "700" },
 
-  empty: { alignItems: 'center', padding: 24 },
-  emptyText: { fontSize: 16, fontWeight: '700' },
-  emptySub: { color: '#777', marginTop: 6 },
-});
+    deviceRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      backgroundColor: theme.card,
+      padding: 14,
+      borderRadius: 12,
+      marginBottom: 10,
+      shadowColor: "#000",
+      shadowOpacity: 0.03,
+      shadowRadius: 6,
+      shadowOffset: { width: 0, height: 2 },
+    },
+
+    deviceName: { fontWeight: "700", color: theme.textDark },
+    deviceSub: { color: theme.textMuted, marginTop: 4 },
+
+    rssiWrap: {
+      marginLeft: 8,
+      paddingHorizontal: 8,
+      paddingVertical: 6,
+      borderRadius: 8,
+      backgroundColor: theme.softPrimary,
+    },
+    rssiText: { color: theme.primary, fontWeight: "700" },
+
+    empty: { alignItems: "center", padding: 24 },
+    emptyText: { fontSize: 16, fontWeight: "700", color: theme.textDark },
+    emptySub: { color: theme.textMuted, marginTop: 6 },
+  });

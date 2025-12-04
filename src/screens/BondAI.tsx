@@ -50,7 +50,7 @@ function createStyles(theme: Theme) {
     msgBot: { backgroundColor: theme.card, borderTopLeftRadius: 4, borderWidth: 1, borderColor: theme.border },
 
     msgText: { fontSize: 14, lineHeight: 20 },
-    msgTextUser: { color: "#fff", fontWeight: "600" },
+    msgTextUser: { color: theme.textOnPrimary, fontWeight: "600" },
     msgTextBot: { color: theme.textDark },
 
     msgTs: { marginTop: 6, fontSize: 10, color: theme.textMuted, textAlign: "right" },
@@ -131,10 +131,68 @@ export default function BondAI() {
     setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
   }, []);
 
-  // Build system prompt tailored to BondAI/DogGPT
-  const systemPrompt = `You are BondAI, an assistant for the BondPulse/DogGPT wearable app.
+  // Get current device data for context
+  const [deviceData, setDeviceData] = useState<any>(null);
+  
+  useEffect(() => {
+    const onData = (data: any) => {
+      setDeviceData(data);
+    };
+    
+    try {
+      const { bleManager } = require("../ble/BLEManager");
+      bleManager.on?.("data", onData);
+      
+      // Get initial state
+      const state = bleManager.getState?.();
+      if (state) {
+        setDeviceData({
+          human: state.human,
+          dog: state.dog,
+          sleepScore: state.sleepScore,
+          recoveryScore: state.recoveryScore,
+          strainScore: state.strainScore,
+        });
+      }
+    } catch (e) {
+      console.warn("BondAI: Failed to subscribe to BLE data", e);
+    }
+    
+    return () => {
+      try {
+        const { bleManager } = require("../ble/BLEManager");
+        bleManager.off?.("data", onData);
+      } catch (e) {}
+    };
+  }, []);
+
+  // Build system prompt tailored to BondAI/DogGPT with device context
+  const buildSystemPrompt = () => {
+    let prompt = `You are BondAI, an assistant for the BondPulse/DogGPT wearable app.
 Be concise, friendly, and provide practical advice about training dogs, heart-rate telemetry, and guided relaxation for humans.
-If user asks for device-specific telemetry, recommend actions and ask to view device data when appropriate.`;
+
+Current device data:`;
+    
+    if (deviceData) {
+      if (deviceData.human) {
+        prompt += `\nHuman (GTS10): HR=${deviceData.human.heartRate || "N/A"}, SpO2=${deviceData.human.spO2 || "N/A"}, HRV=${deviceData.human.hrv || "N/A"}, Battery=${deviceData.human.battery || "N/A"}%`;
+      }
+      if (deviceData.dog) {
+        prompt += `\nDog (GTL1): HR=${deviceData.dog.heartRate || "N/A"}, SpO2=${deviceData.dog.spO2 || "N/A"}, HRV=${deviceData.dog.hrv || "N/A"}, Resp=${deviceData.dog.respiratoryRate || "N/A"}, Battery=${deviceData.dog.battery || "N/A"}%`;
+      }
+      if (deviceData.sleepScore !== undefined) {
+        prompt += `\nBond Score: ${deviceData.sleepScore}/100, Recovery: ${deviceData.recoveryScore || 0}/100, Strain: ${deviceData.strainScore || 0}/100`;
+      }
+    } else {
+      prompt += `\nNo device data available yet.`;
+    }
+    
+    prompt += `\n\nIf user asks about device data, use the current readings above. Provide actionable insights based on the metrics.`;
+    
+    return prompt;
+  };
+  
+  const systemPrompt = buildSystemPrompt();
 
   const callBackend = useCallback(
     async (userText: string) => {
@@ -240,7 +298,7 @@ If user asks for device-specific telemetry, recommend actions and ask to view de
             accessibilityLabel="Send message"
             disabled={loading}
           >
-            <MaterialIcons name="send" size={20} color="#fff" />
+            <MaterialIcons name="send" size={20} color={activeTheme.textOnPrimary} />
           </TouchableOpacity>
         </View>
       </Animated.View>

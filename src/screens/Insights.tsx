@@ -1,7 +1,11 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
+import { useTheme } from '../ThemeProvider';
 
 export default function Insights() {
+  const { theme } = useTheme();
+  const styles = createStyles(theme);
+
   return (
     <View style={styles.container}>
       <Text style={styles.title}>AI Insights</Text>
@@ -12,8 +16,8 @@ export default function Insights() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20, justifyContent: 'center', backgroundColor: '#fff' },
-  title: { fontSize: 24, fontWeight: '700', marginBottom: 8 },
-  subtitle: { fontSize: 16, color: '#555' },
+const createStyles = (theme: any) => StyleSheet.create({
+  container: { flex: 1, padding: 20, justifyContent: 'center', backgroundColor: theme.background },
+  title: { fontSize: 24, fontWeight: '700', marginBottom: 8, color: theme.textDark },
+  subtitle: { fontSize: 16, color: theme.textMuted },
 });

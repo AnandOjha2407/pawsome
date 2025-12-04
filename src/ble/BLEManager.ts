@@ -1,523 +1,661 @@
 // src/ble/BLEManager.ts
-type Listener = (...args: any[]) => void;
+// Real BLE manager with Nordic UART Service support for GTS10/GTL1/ESP32
 
-class SimpleEmitter {
-  private listeners: Record<string, Listener[]> = {};
+import { BleManager, Device } from "react-native-ble-plx";
+import { Buffer } from "buffer";
+import { Alert, Platform, PermissionsAndroid } from "react-native";
+import SimpleEmitter from "./SimpleEmitter";
+import {
+  calculateHumanCoherence,
+  calculateDogCoherence,
+  calculateSynchronization,
+  calculateBondScore,
+} from "../engine/BondEngine";
+import { parseDeviceData, RealTimeData } from "./ProtobufParser";
+import {
+  loadPairedDevices,
+  savePairedDevice,
+  PairedDeviceMap,
+} from "../storage/pairedDevices";
 
-  on(event: string, fn: Listener) {
-    (this.listeners[event] = this.listeners[event] || []).push(fn);
-  }
+type Role = "human" | "dog" | "vest";
 
-  off(event: string, fn?: Listener) {
-    if (!fn) {
-      delete this.listeners[event];
-      return;
-    }
-    this.listeners[event] = (this.listeners[event] || []).filter(
-      (l) => l !== fn
-    );
-    if (this.listeners[event].length === 0) delete this.listeners[event];
-  }
+type Session = {
+  id: string;
+  date: string;
+  durationMin: number;
+  notes?: string;
+};
 
-  emit(event: string, ...args: any[]) {
-    (this.listeners[event] || []).slice().forEach((fn) => {
-      try {
-        fn(...args);
-      } catch (e) {
-        console.warn("Emitter listener error", e);
-      }
-    });
-  }
-}
+export type DeviceDescriptor = {
+  id: string;
+  name?: string | null;
+  mac?: string;
+  rssi?: number | null;
+};
 
-/**
- * Rich mock BLE Manager for both Human & Dog dashboards
- * - Emits 'data' (realtime)
- * - Emits 'connected' / 'disconnected'
- * - Emits 'history' (7-day arrays + sleep summary) on manualFetch / sync
- * - Emits 'training_started' | 'training_stopped' | 'cue'
- * - Emits 'alert' for conditions (low battery / inactivity)
- *
- * Updated: now produces three coherent / relative scores:
- *  - bondScore (combined human+dog sync)
- *  - humanHealthScore
- *  - dogHealthScore
- *
- * Backwards-compatible fields (sleepScore/recoveryScore/strainScore) map to:
- *  - sleepScore -> bondScore
- *  - recoveryScore -> dogHealthScore
- *  - strainScore -> humanHealthScore
- */
-class BLEManager extends SimpleEmitter {
-  // connection & assignment
+// Nordic UART Service UUIDs (used by GTS10, GTL1)
+const UART_SERVICE = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+const UART_TX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"; // Notify (RX from device perspective)
+const UART_RX = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"; // Write (TX from device perspective)
+
+// ESP32 Vest custom service (comfort commands)
+const VEST_SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0";
+const VEST_COMMAND_CHAR_UUID = "12345678-1234-5678-1234-56789abcdef1";
+const VEST_STATUS_CHAR_UUID = "12345678-1234-5678-1234-56789abcdef2";
+
+class BLEManagerReal extends SimpleEmitter {
+  private manager = new BleManager();
+
+  // Map role -> BLE device
+  private devices: Partial<Record<Role, Device>> = {};
+
+  // Map device.id -> assigned role
+  private roles: Record<string, Role> = {};
+
   isConnected = false;
+  rssi: number = -60;
+
+  // For headers + UI compatibility (Home.tsx)
   assignedProfile: "human" | "dog" | null = null;
 
-  // common telemetry
-  rssi = -55;
+  connectedDevice: { name: string; mac: string; rssi: number } | null = null;
 
-  // human-specific
-  heartRate = 72;
-  spO2 = 98;
-  steps = 4500;
-  battery = 80;
-  activeMinutes = 34;
-  activityPct = 0.42;
-  calories = 220;
-
-  // dog-specific
-  dogHeartRate = 80;
-  dogSpO2 = 98;
-  dogSteps = 820;
-  dogBattery = 85;
-  restTime = 120;
-  napDuration = 30;
-  activityLevel: "low" | "medium" | "high" = "medium";
-  harnessContact = true;
-  dogCalories = 120;
-
-  // history and sleep
-  hrHistory: number[] = Array.from(
-    { length: 7 },
-    () => 60 + Math.floor(Math.random() * 40)
-  );
-  stepsHistory: number[] = Array.from(
-    { length: 7 },
-    () => 1000 + Math.floor(Math.random() * 6000)
-  );
-  restVsActiveHistory: { rest: number; active: number }[] = Array.from(
-    { length: 7 },
-    () => ({ rest: 600, active: 180 })
-  );
-  sleepSummary = { lastNight: { deep: 120, light: 240 }, quality: "Good" };
-
-  // training sessions
-  sessions: {
-    id: string;
-    date: string;
-    durationMin: number;
-    notes?: string;
-  }[] = [];
-
-  // firmware + logs
-  firmwareVersion = "mock-1.0.0";
-  logs: string[] = [];
-
-  // simulation
-  mockMode = true;
-  private _simInterval?: any;
-  private _simTarget: "human" | "dog" | "both" = "human";
-  private _trainingActive = false;
-
-  // SCORES (single-source-of-truth)
-  bondScore = 0; // combined human+dog sync
-  humanHealthScore = 0;
-  dogHealthScore = 0;
-
-  // Backwards compatibility (legacy names)
+  // Bonding metrics (0–100)
   sleepScore = 0;
   recoveryScore = 0;
   strainScore = 0;
 
+  // Device data storage
+  private humanData: {
+    heartRate?: number;
+    spO2?: number;
+    hrv: number[];
+    respiratoryRate?: number;
+    battery?: number;
+    lastUpdate: number;
+  } = { hrv: [], lastUpdate: 0 };
+
+  private dogData: {
+    heartRate?: number;
+    spO2?: number;
+    hrv: number[];
+    respiratoryRate?: number;
+    battery?: number;
+    lastUpdate: number;
+  } = { hrv: [], lastUpdate: 0 };
+
+  private sessions: Session[] = [];
+  private sessionStart = Date.now();
+
+  firmwareVersion = "ble-real-0.1";
+  private logs: string[] = [];
+
+  private scanning = false;
+  private connectedRoles: Record<Role, boolean> = {
+    human: false,
+    dog: false,
+    vest: false,
+  };
+  private pairedDescriptors: PairedDeviceMap = {};
+  private comfortStatus: "idle" | "active" = "idle";
+  private bondInterval?: ReturnType<typeof setInterval>;
+  private humanSyncWindow: number[] = [];
+  private dogSyncWindow: number[] = [];
+  private readonly SAMPLE_INTERVAL_MS = 5000;
+  private readonly MAX_SYNC_SAMPLES = 64;
+  private readonly MIN_SYNC_SAMPLES = 12;
+
   constructor() {
     super();
-    this.logs.push(
-      `[${new Date().toISOString()}] BLEManager initialized (mockMode=${
-        this.mockMode
-      })`
+    this.log("BLEManagerReal initialized");
+    this.bondInterval = setInterval(
+      () => this.runBondingTick(),
+      this.SAMPLE_INTERVAL_MS
     );
-  }
-
-  // -------------------------------------------------------------
-  // CONNECTION
-  // -------------------------------------------------------------
-  connect() {
-    this.isConnected = true;
-    this.emit("connected");
-    this.logs.push(`[${new Date().toISOString()}] Connected`);
-  }
-
-  disconnect() {
-    this.isConnected = false;
-    this.emit("disconnected");
-    this.logs.push(`[${new Date().toISOString()}] Disconnected`);
-    this.stopSimulation();
-  }
-
-  // -------------------------------------------------------------
-  // SIMULATION CONTROL
-  // -------------------------------------------------------------
-  simulateData(target?: "human" | "dog" | "both") {
-    if (!this.mockMode) return;
-    if (this._simInterval) return;
-
-    this._simTarget = target ?? this.assignedProfile ?? "human";
-    this.logs.push(
-      `[${new Date().toISOString()}] simulateData started (target=${
-        this._simTarget
-      })`
-    );
-
-    this._simInterval = setInterval(() => {
-      this._simulateTick(this._simTarget);
-    }, 3000);
-  }
-
-  stopSimulation() {
-    if (this._simInterval) {
-      clearInterval(this._simInterval);
-      delete this._simInterval;
-      this.logs.push(`[${new Date().toISOString()}] Simulation stopped`);
-    }
-  }
-
-  // -------------------------------------------------------------
-  // INTERNAL HELPERS (simple smoothing / mapping)
-  // -------------------------------------------------------------
-  private avg(arr: number[]) {
-    if (!arr || arr.length === 0) return 0;
-    return arr.reduce((a, b) => a + b, 0) / arr.length;
-  }
-
-  private clamp01(v: number) {
-    return Math.max(0, Math.min(1, v));
-  }
-
-  private mapTo100(v: number, inMin: number, inMax: number) {
-    // linear map to 0..100
-    const t = (v - inMin) / (inMax - inMin);
-    return Math.round(this.clamp01(t) * 100);
-  }
-
-  // -------------------------------------------------------------
-  // SINGLE SIM TICK
-  // -------------------------------------------------------------
-  private _simulateTick(target: "human" | "dog" | "both") {
-    // update common
-    this.rssi = -60 + Math.floor(Math.random() * 10);
-
-    // human: small random walk (bounded)
-    this.heartRate = Math.max(
-      45,
-      Math.min(160, Math.round(this.heartRate + (Math.random() * 6 - 3)))
-    );
-    this.spO2 = Math.max(
-      90,
-      Math.min(100, Math.round(this.spO2 + (Math.random() > 0.92 ? -1 : 0)))
-    );
-    this.steps += Math.floor(Math.random() * 30);
-    this.battery = Math.max(1, this.battery - (Math.random() < 0.02 ? 1 : 0));
-    this.activeMinutes += Math.random() > 0.8 ? 1 : 0;
-    this.activityPct = Math.min(1, this.activityPct + Math.random() * 0.02);
-    this.calories = Math.round(this.calories + Math.random() * 5);
-
-    // dog: small random walk (bounded)
-    this.dogHeartRate = Math.max(
-      50,
-      Math.min(180, Math.round(this.dogHeartRate + (Math.random() * 6 - 3)))
-    );
-    this.dogSpO2 = Math.max(
-      90,
-      Math.min(100, Math.round(this.dogSpO2 + (Math.random() > 0.95 ? -1 : 0)))
-    );
-    this.dogSteps += Math.floor(Math.random() * 25);
-    this.dogBattery = Math.max(
-      1,
-      this.dogBattery - (Math.random() < 0.02 ? 1 : 0)
-    );
-    if (Math.random() > 0.9) {
-      const list = ["low", "medium", "high"] as const;
-      this.activityLevel = list[Math.floor(Math.random() * list.length)];
-    }
-    this.restTime += Math.random() > 0.85 ? 2 : 0;
-    this.napDuration += Math.random() > 0.9 ? 5 : 0;
-    this.harnessContact = Math.random() > 0.01;
-    this.dogCalories = Math.round(this.dogCalories + Math.random() * 3);
-
-    // history upkeep (occasional)
-    if (Math.random() > 0.92) {
-      this.hrHistory.shift();
-      this.hrHistory.push(50 + Math.floor(Math.random() * 60));
-
-      this.stepsHistory.shift();
-      this.stepsHistory.push(200 + Math.floor(Math.random() * 6500));
-
-      this.restVsActiveHistory.shift();
-      this.restVsActiveHistory.push({
-        rest: 500 + Math.floor(Math.random() * 300),
-        active: 120 + Math.floor(Math.random() * 180),
-      });
-    }
-
-    // alerts
-    if (this.battery < 15)
-      this.emit("alert", {
-        type: "low_battery",
-        target: "human",
-        battery: this.battery,
-      });
-    if (this.dogBattery < 15)
-      this.emit("alert", {
-        type: "low_battery",
-        target: "dog",
-        battery: this.dogBattery,
-      });
-    if (this.activityLevel === "low" && Math.random() > 0.995) {
-      this.emit("alert", { type: "inactivity", target: "dog" });
-    }
-
-    // -------------------------------------------------------------
-    // SCORES / HEALTH METRICS (relative & coherent)
-    // -------------------------------------------------------------
-    // Simulate HRV-ish values (ms) for human & dog for scoring (mocked)
-    const humanHRV = 20 + Math.floor(Math.random() * 60); // 20..80 ms
-    const dogHRV = 15 + Math.floor(Math.random() * 50); // 15..65 ms
-
-    // Human health: combine HR (resting preference), HRV, SpO2
-    // - Preferred resting HR mapped 40..100 => higher score if lower HR
-    const humanHRScore = this.mapTo100(100 - (this.heartRate - 40), 0, 100); // inverse HR
-    const humanHRVScore = this.mapTo100(humanHRV, 10, 80);
-    const humanO2Score = this.mapTo100(this.spO2, 92, 100);
-    // weighted combine
-    this.humanHealthScore = Math.round(
-      humanHRScore * 0.4 + humanHRVScore * 0.35 + humanO2Score * 0.25
-    );
-
-    // Dog health: combine dog HR, dog HRV, dog SpO2
-    const dogHRScore = this.mapTo100(100 - (this.dogHeartRate - 40), 0, 100);
-    const dogHRVScore = this.mapTo100(dogHRV, 10, 70);
-    const dogO2Score = this.mapTo100(this.dogSpO2, 92, 100);
-    this.dogHealthScore = Math.round(
-      dogHRScore * 0.45 + dogHRVScore * 0.25 + dogO2Score * 0.3
-    );
-
-    // Bond score: measure synchrony and calm alignment between human & dog
-    // Simple approach:
-    //  - HR difference (smaller diff -> better sync)
-    //  - both low strain (both health scores high)
-    //  - activity alignment (both moving or both resting)
-    const hrDiff = Math.abs(this.heartRate - this.dogHeartRate); // lower is better
-    const hrSyncScore = this.mapTo100(Math.max(0, 120 - hrDiff), 20, 120); // map smaller diff to higher
-    const healthAvg = (this.humanHealthScore + this.dogHealthScore) / 2;
-    // activity alignment: if both activityPct/dog steps relative indicate similar state
-    const humanActive = this.activityPct > 0.35 || this.activeMinutes > 10;
-    const dogActive =
-      this.activityLevel === "high" || this.dogSteps % 1000 > 200;
-    const activityMatch = humanActive === dogActive ? 100 : 50;
-
-    // combine into bond (0..100)
-    this.bondScore = Math.round(
-      (this.humanHealthScore + this.dogHealthScore) / 2
-    );
-
-    // Backwards compatibility
-    this.sleepScore = this.bondScore;
-    this.recoveryScore = this.dogHealthScore;
-    this.strainScore = this.humanHealthScore;
-
-    // -------------------------------------------------------------
-    // PAYLOADS (SAME SCORES FOR HUMAN + DOG where appropriate)
-    // -------------------------------------------------------------
-    const humanPayload = {
-      profile: "human",
-      heartRate: this.heartRate,
-      spO2: this.spO2,
-      steps: this.steps,
-      battery: this.battery,
-      activeMinutes: this.activeMinutes,
-      activityPct: this.activityPct,
-      calories: this.calories,
-      rssi: this.rssi,
-      firmwareVersion: this.firmwareVersion,
-
-      // scores
-      bondScore: this.bondScore,
-      humanHealthScore: this.humanHealthScore,
-      dogHealthScore: this.dogHealthScore,
-
-      // legacy
-      sleepScore: this.sleepScore,
-      recoveryScore: this.recoveryScore,
-      strainScore: this.strainScore,
-    };
-
-    const dogPayload = {
-      profile: "dog",
-      activityLevel: this.activityLevel,
-      steps: this.dogSteps,
-      restTime: this.restTime,
-      napDuration: this.napDuration,
-      battery: this.dogBattery,
-      harnessContact: this.harnessContact,
-      calories: this.dogCalories,
-      rssi: this.rssi,
-      firmwareVersion: this.firmwareVersion,
-
-      // dog vitals
-      dogHeartRate: this.dogHeartRate,
-      dogSpO2: this.dogSpO2,
-
-      // scores
-      bondScore: this.bondScore,
-      humanHealthScore: this.humanHealthScore,
-      dogHealthScore: this.dogHealthScore,
-
-      // legacy
-      sleepScore: this.sleepScore,
-      recoveryScore: this.recoveryScore,
-      strainScore: this.strainScore,
-    };
-
-    // emit
-    if (target === "human") this.emit("data", humanPayload);
-    else if (target === "dog") this.emit("data", dogPayload);
-    else {
-      this.emit("data", humanPayload);
-      this.emit("data", dogPayload);
-    }
-
-    this.logs.push(`[${new Date().toISOString()}] emit data target=${target}`);
-  }
-
-  // -------------------------------------------------------------
-  // HISTORY + MANUAL FETCH
-  // -------------------------------------------------------------
-  manualFetch() {
-    const target = this.assignedProfile ?? "human";
-    this._simulateTick(target);
-
-    this.emit("history", {
-      hrHistory: this.hrHistory.slice(),
-      stepsHistory: this.stepsHistory.slice(),
-      restVsActiveHistory: this.restVsActiveHistory.slice(),
-      sleepSummary: this.sleepSummary,
+    loadPairedDevices().then((map) => {
+      this.pairedDescriptors = map;
+      this.emitConnections();
     });
+  }
 
-    this.logs.push(
-      `[${new Date().toISOString()}] manualFetch -> history emitted`
+  // ----------------------------------------------------------
+  // LOGGING
+  // ----------------------------------------------------------
+  private log(msg: string) {
+    const line = `[${new Date().toISOString()}] ${msg}`;
+    this.logs.push(line);
+    if (this.logs.length > 200) this.logs.shift();
+    console.log(line);
+  }
+
+  // ----------------------------------------------------------
+  // ANDROID PERMISSIONS
+  // ----------------------------------------------------------
+  private async requestPermissions() {
+    if (Platform.OS !== "android") return;
+
+    try {
+      await PermissionsAndroid.requestMultiple([
+        "android.permission.BLUETOOTH_SCAN",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.ACCESS_FINE_LOCATION",
+      ]);
+    } catch (e) {
+      this.log("Permission error: " + String(e));
+    }
+  }
+
+  // ----------------------------------------------------------
+  // SCANNING — Pairing.tsx calls startScan(callback)
+  // ----------------------------------------------------------
+  async startScan(onDeviceFound: (dev: DeviceDescriptor) => void) {
+    if (this.scanning) return;
+
+    await this.requestPermissions();
+    this.scanning = true;
+    this.log("Scan started");
+
+    this.manager.startDeviceScan(null, { allowDuplicates: false }, (error, device) => {
+      if (error) {
+        this.log("Scan error: " + error.message);
+        return;
+      }
+      if (!device) return;
+
+      const { id, name, rssi } = device;
+
+      onDeviceFound({
+        id,
+        name,
+        mac: id,
+        rssi,
+      });
+    });
+  }
+
+  stopScan() {
+    if (!this.scanning) return;
+
+    this.manager.stopDeviceScan();
+    this.scanning = false;
+    this.log("Scan stopped");
+  }
+
+  // ----------------------------------------------------------
+  // MANUAL ROLE ASSIGNMENT (OPTION C)
+  // ----------------------------------------------------------
+  assignDeviceType(descriptor: DeviceDescriptor, role: Role) {
+    this.roles[descriptor.id] = role;
+    this.pairedDescriptors[role] = descriptor;
+    savePairedDevice(role, descriptor).catch((e) =>
+      console.warn("Failed to persist paired device", e)
+    );
+
+    this.connectedDevice = {
+      name: descriptor.name ?? `${role.toUpperCase()} Device`,
+      mac: descriptor.id,
+      rssi: descriptor.rssi ?? -60,
+    };
+
+    if (role === "human" || role === "dog") {
+      this.assignedProfile = role;
+    }
+
+    this.log(`Device assigned → ${role} (${descriptor.id})`);
+    this.emit("assigned", { role, descriptor });
+    this.emitConnections();
+  }
+
+  private emitConnections() {
+    this.emit("connections", this.getConnections());
+  }
+
+  getConnections() {
+    return {
+      connected: { ...this.connectedRoles },
+      paired: { ...this.pairedDescriptors },
+      assignedProfile: this.assignedProfile,
+    };
+  }
+
+  isRoleConnected(role: Role) {
+    return !!this.connectedRoles[role];
+  }
+
+  // ----------------------------------------------------------
+  // CONNECT (Used after assigning role)
+  // ----------------------------------------------------------
+  async connectToScannedDevice(
+    descriptor: DeviceDescriptor,
+    role: Role
+  ): Promise<void> {
+    this.stopScan();
+    try {
+      this.log(`Connecting to ${descriptor.name ?? "Unknown"} as ${role}`);
+
+      if (!descriptor.id) {
+        throw new Error("Invalid device ID");
+      }
+
+      const device = await this.manager.connectToDevice(descriptor.id, {
+        requestMTU: 185,
+      });
+
+      await device.discoverAllServicesAndCharacteristics();
+
+      this.devices[role] = device;
+      this.roles[device.id] = role;
+      this.rssi = device.rssi ?? -60;
+
+      if (role === "human" || role === "dog") {
+        this.subscribeNordicUART(device, role);
+      } else {
+        this.subscribeVestComfort(device);
+      }
+
+      device.onDisconnected(() => {
+        this.connectedRoles[role] = false;
+        if (role === "vest") {
+          this.comfortStatus = "idle";
+        }
+        this.emitConnections();
+      });
+
+      this.connectedDevice = {
+        name: descriptor.name ?? `${role.toUpperCase()} Device`,
+        mac: descriptor.id,
+        rssi: descriptor.rssi ?? -60,
+      };
+
+      if (role === "human" || role === "dog")
+        this.assignedProfile = role;
+
+      this.isConnected = true;
+      this.connectedRoles[role] = true;
+      this.emitConnections();
+      this.emit("connected", this.connectedDevice);
+
+      this.log(`Connected to ${descriptor.id}`);
+    } catch (e: any) {
+      this.log("Connect error: " + String(e?.message ?? e));
+      // Alert.alert("BLE Error", "Failed to connect."); // Removed to prevent UI blocking
+      this.emit("error", e);
+    }
+  }
+
+  // ----------------------------------------------------------
+  // LEGACY CONNECT() — Used by Details screen
+  // ----------------------------------------------------------
+  async connect() {
+    if (!this.connectedDevice) {
+      Alert.alert("No device selected", "Please use the Pairing screen first.");
+      return;
+    }
+
+    const role =
+      this.roles[this.connectedDevice.mac] ?? this.assignedProfile ?? "human";
+
+    await this.connectToScannedDevice(
+      {
+        id: this.connectedDevice.mac,
+        name: this.connectedDevice.name,
+        mac: this.connectedDevice.mac,
+        rssi: this.connectedDevice.rssi,
+      },
+      role
     );
   }
 
-  // -------------------------------------------------------------
-  // TRAINING
-  // -------------------------------------------------------------
-  startTrainingSession(meta?: { type?: string }) {
-    if (this._trainingActive) return;
-    this._trainingActive = true;
+  // ----------------------------------------------------------
+  // NORDIC UART SERVICE (GTS10/GTL1) MONITORING
+  // ----------------------------------------------------------
+  private subscribeNordicUART(device: Device, role: "human" | "dog") {
+    this.log(`Subscribing Nordic UART notifications for ${role} (${device.id})`);
 
-    const session = {
+    device.monitorCharacteristicForService(
+      UART_SERVICE,
+      UART_TX,
+      (error, char) => {
+        if (error) {
+          this.log(`Nordic UART error [${role}]: ${error.message}`);
+          return;
+        }
+        if (!char?.value) return;
+
+        const raw = Buffer.from(char.value, "base64");
+        const hex = raw.toString("hex");
+        this.log(`Nordic UART packet [${role}]: ${hex} (${raw.length} bytes)`);
+
+        // Parse protobuf RealTimeData
+        const parsed = parseDeviceData(raw);
+
+        if (parsed) {
+          this.log(`Parsed data [${role}]: HR=${parsed.heart_rate}, SpO2=${parsed.blood_oxygen}, HRV=${parsed.hrv}, Resp=${parsed.respiratory_rate}`);
+
+          // Update device-specific data
+          const targetData = role === "human" ? this.humanData : this.dogData;
+
+          if (parsed.heart_rate !== undefined) {
+            targetData.heartRate = parsed.heart_rate;
+          }
+          if (parsed.blood_oxygen !== undefined) {
+            targetData.spO2 = parsed.blood_oxygen;
+          }
+          if (parsed.hrv !== undefined) {
+            targetData.hrv.push(parsed.hrv);
+            if (targetData.hrv.length > 64) targetData.hrv.shift();
+          }
+          if (parsed.respiratory_rate !== undefined) {
+            targetData.respiratoryRate = parsed.respiratory_rate;
+          }
+          if (parsed.battery !== undefined) {
+            targetData.battery = parsed.battery;
+          }
+          targetData.lastUpdate = Date.now();
+
+          // Emit data event with all sensor data
+          this.emitDeviceData(role);
+
+        } else {
+          this.log(`Failed to parse packet [${role}], trying fallback extraction`);
+          // Fallback: try to extract basic values from raw bytes
+          if (raw.length >= 4) {
+            const hr = raw[0] >= 40 && raw[0] <= 220 ? raw[0] : undefined;
+            const spo2 = raw[1] >= 70 && raw[1] <= 100 ? raw[1] : undefined;
+            const hrv = raw[2] >= 10 && raw[2] <= 200 ? raw[2] : undefined;
+
+            if (hr) {
+              const targetData = role === "human" ? this.humanData : this.dogData;
+              targetData.heartRate = hr;
+              if (spo2) targetData.spO2 = spo2;
+              if (hrv) {
+                targetData.hrv.push(hrv);
+                if (targetData.hrv.length > 64) targetData.hrv.shift();
+              }
+              targetData.lastUpdate = Date.now();
+              this.emitDeviceData(role);
+            }
+          }
+        }
+      }
+    );
+  }
+
+  // Emit device data event with all sensor readings
+  private emitDeviceData(role: "human" | "dog") {
+    const data = role === "human" ? this.humanData : this.dogData;
+    const latestHRV = data.hrv.length > 0 ? data.hrv[data.hrv.length - 1] : undefined;
+
+    const payload: any = {
+      profile: role,
+      heartRate: data.heartRate,
+      spO2: data.spO2,
+      hrv: latestHRV,
+      respiratoryRate: data.respiratoryRate,
+      battery: data.battery,
+      rssi: this.rssi,
+      firmwareVersion: this.firmwareVersion,
+      sleepScore: this.sleepScore,
+      recoveryScore: this.recoveryScore,
+      strainScore: this.strainScore,
+    };
+
+    // Add HRV history for sync calculations
+    if (role === "human") {
+      payload.hrvHistory = [...data.hrv];
+    } else {
+      payload.hrvHistory = [...data.hrv];
+    }
+
+    this.emit("data", payload);
+    this.log(`Emitted data [${role}]: HR=${data.heartRate}, SpO2=${data.spO2}, HRV=${latestHRV}`);
+  }
+
+  // ----------------------------------------------------------
+  // ESP32 VEST — UART MONITORING + COMMANDS
+  // ----------------------------------------------------------
+  private subscribeVestComfort(device: Device) {
+    this.log(`Subscribing vest comfort service (${device.id})`);
+    device.monitorCharacteristicForService(
+      VEST_SERVICE_UUID,
+      VEST_STATUS_CHAR_UUID,
+      (error, char) => {
+        if (error) {
+          this.log("Vest status error: " + error.message);
+          return;
+        }
+        if (!char?.value) return;
+
+        try {
+          const status = Buffer.from(char.value, "base64").toString("utf8");
+          this.comfortStatus = status.includes("active") ? "active" : "idle";
+          this.emit("comfort", { status: this.comfortStatus, payload: status });
+        } catch (e) {
+          this.log("Vest status parse error: " + String(e));
+        }
+      }
+    );
+  }
+
+  private async writeVestCommand(payload: string) {
+    const vest = this.devices.vest;
+    if (!vest) {
+      throw new Error("Vest not connected");
+    }
+    const b64 = Buffer.from(payload, "utf8").toString("base64");
+    await vest.writeCharacteristicWithResponseForService(
+      VEST_SERVICE_UUID,
+      VEST_COMMAND_CHAR_UUID,
+      b64
+    );
+    this.log(`Sent comfort payload: ${payload}`);
+  }
+
+  sendComfortSignal(
+    target: "dog" | "human",
+    opts?: { redLight?: boolean; vibration?: "gentle" | "pulse"; durationMs?: number }
+  ) {
+    const payload = {
+      action: "comfort",
+      target,
+      redlight: opts?.redLight ?? (target === "dog"),
+      vibration: opts?.vibration ?? (target === "dog" ? "gentle" : "pulse"),
+      duration: opts?.durationMs ?? 30000,
+      timestamp: Date.now(),
+    };
+
+    return this.writeVestCommand(JSON.stringify(payload))
+      .then(() => {
+        this.comfortStatus = "active";
+        this.emit("comfort", { status: "active", target });
+      })
+      .catch((e) => {
+        this.log("Comfort signal failed: " + String(e?.message ?? e));
+        throw e;
+      });
+  }
+
+  sendCue(type: "vibrate" | "beep" | "tone" = "vibrate") {
+    // Backwards-compatibility: map cues to comfort signals.
+    const vibration = type === "vibrate" ? "gentle" : type === "tone" ? "pulse" : "pulse";
+    return this.sendComfortSignal("dog", { vibration });
+  }
+
+  // ----------------------------------------------------------
+  // BOND ENGINE UPDATE LOOP
+  // ----------------------------------------------------------
+  private updateBondScores() {
+    const humanSeries = this.humanSyncWindow.slice(-this.MAX_SYNC_SAMPLES);
+    const dogSeries = this.dogSyncWindow.slice(-this.MAX_SYNC_SAMPLES);
+
+    if (
+      humanSeries.length < this.MIN_SYNC_SAMPLES ||
+      dogSeries.length < this.MIN_SYNC_SAMPLES
+    ) {
+      return;
+    }
+
+    const humanHRVlatest = humanSeries[humanSeries.length - 1];
+    const dogHRVlatest = dogSeries[dogSeries.length - 1];
+
+    // Use real HR data if available, otherwise use defaults
+    const humanHR = this.humanData.heartRate ?? 75;
+    const dogHR = this.dogData.heartRate ?? 95;
+    const resp = this.dogData.respiratoryRate ?? 24;
+
+    const humanC = calculateHumanCoherence(humanHRVlatest, humanHR);
+    const dogC = calculateDogCoherence(dogHRVlatest, dogHR, resp);
+    const sync = calculateSynchronization(humanSeries, dogSeries);
+
+    const durSec = (Date.now() - this.sessionStart) / 1000;
+
+    const bond0to10 = calculateBondScore(humanC, dogC, sync, durSec);
+
+    this.sleepScore = Math.round(bond0to10 * 10);
+    this.recoveryScore = Math.round(dogC);
+    this.strainScore = Math.round(humanC);
+
+    // Emit combined bond scores
+    this.emit("data", {
+      sleepScore: this.sleepScore,
+      recoveryScore: this.recoveryScore,
+      strainScore: this.strainScore,
+      bondScore: this.sleepScore,
+      humanHealthScore: this.strainScore,
+      dogHealthScore: this.recoveryScore,
+    });
+  }
+
+  // ----------------------------------------------------------
+  // TRAINING
+  // ----------------------------------------------------------
+  startTrainingSession(meta?: { type?: string }) {
+    const s: Session = {
       id: `${Date.now()}`,
       date: new Date().toISOString(),
       durationMin: 0,
       notes: meta?.type ?? "training",
     };
-
-    this.sessions.unshift(session);
-    this.emit("training_started", session);
-    this.logs.push(
-      `[${new Date().toISOString()}] training_started ${session.id}`
-    );
+    this.sessions.unshift(s);
+    this.sessionStart = Date.now();
+    this.emit("training_started", s);
   }
 
   stopTrainingSession() {
-    if (!this._trainingActive) return;
-    this._trainingActive = false;
+    if (!this.sessions.length) return;
 
-    const session = this.sessions[0];
-    if (session) session.durationMin = 10 + Math.floor(Math.random() * 40);
+    const s = this.sessions[0];
+    const mins = (Date.now() - this.sessionStart) / 60000;
 
-    this.emit("training_stopped", session);
-    this.logs.push(
-      `[${new Date().toISOString()}] training_stopped ${session?.id}`
-    );
+    s.durationMin = Math.max(1, Math.round(mins));
+
+    this.emit("training_stopped", s);
   }
 
-  sendCue(type: "vibrate" | "beep" | "tone" = "vibrate") {
-    this.emit("cue", { type });
-    this.logs.push(`[${new Date().toISOString()}] cue ${type}`);
+  // ----------------------------------------------------------
+  // MISC (UI compatibility)
+  // ----------------------------------------------------------
+  manualFetch() {
+    this.emit("data", {
+      sleepScore: this.sleepScore,
+      recoveryScore: this.recoveryScore,
+      strainScore: this.strainScore,
+    });
   }
 
-  // -------------------------------------------------------------
-  // DEBUG / GETTERS
-  // -------------------------------------------------------------
+  setMockMode(_on: boolean) {
+    this.log("Mock mode ignored (real BLE manager)");
+  }
+
+  assignProfile(p: "human" | "dog") {
+    this.assignedProfile = p;
+    this.log(`assignedProfile=${p}`);
+    this.emit("assigned", { profile: p });
+  }
+
+  emitLogs() {
+    this.emit("logs", this.logs.slice(-50));
+  }
+
+  // ----------------------------------------------------------
+  // DISCONNECT
+  // ----------------------------------------------------------
+  disconnect() {
+    Object.values(this.devices).forEach((d) => {
+      try {
+        d?.cancelConnection();
+      } catch (_) { }
+    });
+
+    this.devices = {};
+    this.roles = {};
+    this.humanData = { hrv: [], lastUpdate: 0 };
+    this.dogData = { hrv: [], lastUpdate: 0 };
+    this.humanSyncWindow = [];
+    this.dogSyncWindow = [];
+    this.isConnected = false;
+    this.connectedDevice = null;
+    this.assignedProfile = null;
+    this.connectedRoles = { human: false, dog: false, vest: false };
+    this.comfortStatus = "idle";
+
+    this.log("Disconnected all devices");
+    this.emit("disconnected");
+    this.emitConnections();
+  }
+
+  private runBondingTick() {
+    this.captureSyncSample("human");
+    this.captureSyncSample("dog");
+    this.updateBondScores();
+  }
+
+  private captureSyncSample(role: "human" | "dog") {
+    const store = role === "human" ? this.humanData : this.dogData;
+    if (!store.hrv.length) return;
+
+    const isFresh =
+      Date.now() - store.lastUpdate <= this.SAMPLE_INTERVAL_MS * 2;
+    if (!isFresh) return;
+
+    const latest = store.hrv[store.hrv.length - 1];
+    if (latest === undefined) return;
+
+    const buffer = role === "human" ? this.humanSyncWindow : this.dogSyncWindow;
+    buffer.push(latest);
+    if (buffer.length > this.MAX_SYNC_SAMPLES) buffer.shift();
+  }
+
+  // ----------------------------------------------------------
+  // STATE (UI)
+  // ----------------------------------------------------------
   getState() {
     return {
       isConnected: this.isConnected,
       assignedProfile: this.assignedProfile,
-
+      rssi: this.rssi,
       human: {
-        heartRate: this.heartRate,
-        spO2: this.spO2,
-        steps: this.steps,
-        battery: this.battery,
-        activeMinutes: this.activeMinutes,
-        activityPct: this.activityPct,
-        calories: this.calories,
+        battery: this.humanData.battery ?? 70,
+        heartRate: this.humanData.heartRate,
+        spO2: this.humanData.spO2,
+        hrv: this.humanData.hrv.length > 0 ? this.humanData.hrv[this.humanData.hrv.length - 1] : undefined,
       },
-
       dog: {
-        dogHeartRate: this.dogHeartRate,
-        dogSpO2: this.dogSpO2,
-        steps: this.dogSteps,
-        battery: this.dogBattery,
-        restTime: this.restTime,
-        napDuration: this.napDuration,
-        activityLevel: this.activityLevel,
-        harnessContact: this.harnessContact,
-        calories: this.dogCalories,
+        battery: this.dogData.battery ?? 80,
+        heartRate: this.dogData.heartRate,
+        spO2: this.dogData.spO2,
+        hrv: this.dogData.hrv.length > 0 ? this.dogData.hrv[this.dogData.hrv.length - 1] : undefined,
+        respiratoryRate: this.dogData.respiratoryRate,
       },
-
-      hrHistory: this.hrHistory.slice(),
-      stepsHistory: this.stepsHistory.slice(),
-      sleepSummary: this.sleepSummary,
       sessions: this.sessions.slice(0, 10),
-
-      bondScore: this.bondScore,
-      humanHealthScore: this.humanHealthScore,
-      dogHealthScore: this.dogHealthScore,
-
+      firmwareVersion: this.firmwareVersion,
       sleepScore: this.sleepScore,
       recoveryScore: this.recoveryScore,
       strainScore: this.strainScore,
-
-      logs: this.logs.slice(-100),
+      logs: this.logs.slice(-50),
     };
-  }
-
-  emitLogs() {
-    this.emit("logs", this.getState().logs);
-  }
-
-  assignProfile(profile: "human" | "dog") {
-    this.assignedProfile = profile;
-    this.logs.push(`[${new Date().toISOString()}] assignedProfile=${profile}`);
-    this.emit("assigned", { profile });
-  }
-
-  setMockMode(on: boolean) {
-    this.mockMode = on;
-    this.logs.push(`[${new Date().toISOString()}] mockMode=${on}`);
-    if (!on) this.stopSimulation();
-  }
-
-  seedHistory({
-    hr,
-    steps,
-    restVsActive,
-    sleep,
-  }: {
-    hr?: number[];
-    steps?: number[];
-    restVsActive?: any[];
-    sleep?: any;
-  }) {
-    if (hr) this.hrHistory = hr.slice();
-    if (steps) this.stepsHistory = steps.slice();
-    if (restVsActive) this.restVsActiveHistory = restVsActive.slice();
-    if (sleep) this.sleepSummary = sleep;
-
-    this.logs.push(`[${new Date().toISOString()}] seedHistory called`);
   }
 }
 
-export const bleManager = new BLEManager();
+export const bleManager = new BLEManagerReal();

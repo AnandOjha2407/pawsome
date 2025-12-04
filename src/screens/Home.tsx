@@ -1,5 +1,6 @@
 // src/screens/Home.tsx
 import { useTheme } from "../ThemeProvider";
+import { Theme } from "../theme";
 import React, {
   useMemo,
   useState,
@@ -16,7 +17,6 @@ import {
   Alert,
   Pressable,
   Animated,
-  Image,
   TouchableOpacity,
   Platform,
   Modal,
@@ -35,34 +35,16 @@ import { bleManager } from "../ble/BLEManager";
 import Constants from "expo-constants";
 import Svg, { Circle, G } from "react-native-svg";
 import { Animated as RNAnimated } from "react-native";
+import { useRouter } from "expo-router";
+import { LinearGradient } from "expo-linear-gradient";
 const AnimatedG = RNAnimated.createAnimatedComponent(G);
 
-type Props = { navigation: any; route?: any };
+type Props = { navigation?: any; route?: any };
 const screenW = Dimensions.get("window").width;
 
 /* ---------- Static assets (ensure these exist) ---------- */
 const bannerDog = require("../../assets/images/banner.jpg");
 const avatarDog = require("../../assets/images/avatar_placeholder.png");
-
-const momentsDog = [
-  require("../../assets/images/moments_1.jpg"),
-  require("../../assets/images/moments_2.jpg"),
-  require("../../assets/images/moments_3.jpg"),
-];
-
-/* ---------- Theme (Dog mode only) ---------- */
-const dogTheme = {
-  background: "#f6fbfb",
-  card: "#ffffff",
-  primary: "#2aa6a0",
-  softPrimary: "#e6f6f7",
-  textDark: "#123235",
-  textMuted: "#5f7b79",
-  green: "#2aa876",
-  orange: "#e07b39",
-  purple: "#7c5cff",
-  gradient: ["#e6f6f7", "#f6fbfb"],
-};
 
 /* ---------- Small helpers ---------- */
 function AnimatedButton({
@@ -115,7 +97,15 @@ function AnimatedButton({
 }
 
 /* Dot indicator used by carousel */
-function Dots({ count, index }: { count: number; index: Animated.Value }) {
+function Dots({
+  count,
+  index,
+  theme,
+}: {
+  count: number;
+  index: Animated.Value;
+  theme: Theme;
+}) {
   return (
     <View
       style={{
@@ -144,12 +134,12 @@ function Dots({ count, index }: { count: number; index: Animated.Value }) {
               width: 8,
               height: 8,
               borderRadius: 8,
-              backgroundColor: "#fff",
+              backgroundColor: theme.textDark,
               transform: [{ scale: dotScale }],
               opacity,
               marginHorizontal: 4,
               borderWidth: 0.5,
-              borderColor: "rgba(0,0,0,0.06)",
+              borderColor: theme.border,
             }}
           />
         );
@@ -159,15 +149,15 @@ function Dots({ count, index }: { count: number; index: Animated.Value }) {
 }
 
 /* ---------- Styles factory ---------- */
-function createStyles(theme: typeof dogTheme) {
+function createStyles(theme: Theme) {
   return StyleSheet.create({
     screen: { flex: 1, backgroundColor: theme.background },
     header: {
       paddingTop: Platform.OS === "ios" ? 48 : 20,
       paddingHorizontal: 18,
-      paddingBottom: 10,
-      backgroundColor: theme.card,
-      borderBottomColor: "#e6edf3",
+      paddingBottom: 14,
+      backgroundColor: theme.background,
+      borderBottomColor: theme.border,
       borderBottomWidth: 1,
       flexDirection: "row",
       alignItems: "center",
@@ -178,10 +168,16 @@ function createStyles(theme: typeof dogTheme) {
       width: 48,
       height: 48,
       marginRight: 10,
-      borderRadius: 12,
-      backgroundColor: theme.softPrimary,
+      borderRadius: 14,
+      backgroundColor: theme.glassBackground,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
       alignItems: "center",
       justifyContent: "center",
+      shadowColor: theme.primary,
+      shadowOpacity: 0.25,
+      shadowRadius: 12,
+      shadowOffset: { width: 0, height: 4 },
     },
     appName: { fontSize: 20, fontWeight: "700", color: theme.textDark },
     appSub: { fontSize: 12, color: theme.textMuted },
@@ -189,37 +185,42 @@ function createStyles(theme: typeof dogTheme) {
     content: { padding: 18, paddingBottom: 48 },
     parallaxBannerWrap: {
       width: screenW - 36,
-      height: 170,
-      borderRadius: 14,
+      height: 190,
+      borderRadius: 18,
       overflow: "hidden",
       alignSelf: "center",
-      marginBottom: 14,
+      marginBottom: 20,
+      borderWidth: 1,
+      borderColor: theme.border,
+      // backgroundColor: theme.card, // Replaced by gradient in render
     },
     parallaxBanner: { width: "100%", height: "100%", resizeMode: "cover" },
 
     heroSection: {
-      borderRadius: 16,
-      paddingVertical: 22,
-      paddingHorizontal: 20,
+      borderRadius: 20,
+      paddingVertical: 24,
+      paddingHorizontal: 22,
       alignItems: "center",
       justifyContent: "center",
-      marginBottom: 16,
-      backgroundColor: theme.card,
+      marginBottom: 18,
+      // backgroundColor: theme.card, // Replaced by gradient
+      borderWidth: 1,
+      borderColor: theme.border,
       shadowColor: "#000",
-      shadowOpacity: 0.05,
-      shadowRadius: 10,
-      shadowOffset: { width: 0, height: 3 },
+      shadowOpacity: 0.4,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: 8 },
     },
     heroRow: { flexDirection: "row", alignItems: "center", gap: 16 },
     heroImage: {
       width: 110,
       height: 110,
-      borderRadius: 16,
+      borderRadius: 18,
       marginBottom: 8,
-      backgroundColor: "#eee",
+      backgroundColor: theme.overlayLight,
     },
     heroTitle: {
-      fontSize: 24,
+      fontSize: 26,
       fontWeight: "800",
       color: theme.textDark,
       marginBottom: 8,
@@ -231,19 +232,23 @@ function createStyles(theme: typeof dogTheme) {
       textAlign: "left",
       lineHeight: 20,
     },
-    getStartedBtn: { marginTop: 14, borderRadius: 12, overflow: "hidden" },
+    getStartedBtn: { marginTop: 14, borderRadius: theme.buttonRadius, overflow: "hidden" },
     getStartedInner: {
       flexDirection: "row",
       alignItems: "center",
       gap: 10,
       backgroundColor: theme.primary,
-      paddingVertical: 10,
-      paddingHorizontal: 16,
-      borderRadius: 12,
+      paddingVertical: 12,
+      paddingHorizontal: 18,
+      borderRadius: theme.buttonRadius,
+      shadowColor: theme.primary,
+      shadowOpacity: 0.45,
+      shadowRadius: 12,
+      shadowOffset: { width: 0, height: 4 },
     },
-    getStartedText: { color: "#fff", fontWeight: "800" },
+    getStartedText: { color: theme.textOnPrimary, fontWeight: "800" },
     heroNote: {
-      marginTop: 10,
+      marginTop: 14,
       color: theme.textMuted,
       fontSize: 12,
       textAlign: "center",
@@ -252,16 +257,18 @@ function createStyles(theme: typeof dogTheme) {
     deviceStrip: {
       marginTop: 12,
       marginBottom: 10,
-      backgroundColor: theme.card,
-      borderRadius: 12,
-      padding: 12,
+      backgroundColor: theme.glassBackground,
+      borderRadius: 16,
+      padding: 16,
       flexDirection: "row",
       alignItems: "center",
       justifyContent: "space-between",
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
       shadowColor: "#000",
-      shadowOpacity: 0.03,
-      shadowRadius: 8,
-      shadowOffset: { width: 0, height: 3 },
+      shadowOpacity: 0.25,
+      shadowRadius: 14,
+      shadowOffset: { width: 0, height: 6 },
     },
     deviceLeft: { flexDirection: "row", alignItems: "center", gap: 12 },
     deviceName: { fontWeight: "700", color: theme.textDark },
@@ -269,18 +276,18 @@ function createStyles(theme: typeof dogTheme) {
 
     onboardingWrap: {
       marginTop: 14,
-      height: 220,
-      borderRadius: 12,
+      height: 240,
+      borderRadius: 16,
       overflow: "hidden",
     },
     onboardingSlide: {
       width: screenW - 36,
-      padding: 20,
+      padding: 22,
       justifyContent: "center",
       alignItems: "center",
     },
     onboardingTitle: {
-      fontSize: 18,
+      fontSize: 20,
       fontWeight: "800",
       color: theme.textDark,
       marginBottom: 8,
@@ -293,14 +300,16 @@ function createStyles(theme: typeof dogTheme) {
 
     featuresRow: { marginTop: 18, gap: 12 },
     featureCard: {
-      backgroundColor: theme.card,
-      borderRadius: 12,
-      padding: 14,
+      // backgroundColor: theme.card, // Replaced by gradient
+      borderRadius: 14,
+      padding: 16,
       marginBottom: 12,
+      borderWidth: 1,
+      borderColor: theme.border,
       shadowColor: "#000",
-      shadowOpacity: 0.03,
-      shadowRadius: 6,
-      shadowOffset: { width: 0, height: 3 },
+      shadowOpacity: 0.3,
+      shadowRadius: 12,
+      shadowOffset: { width: 0, height: 8 },
     },
     featureTitle: {
       fontWeight: "800",
@@ -315,32 +324,28 @@ function createStyles(theme: typeof dogTheme) {
       gap: 12,
       alignItems: "center",
       flexDirection: "row",
+      flexWrap: "wrap",
     },
     trainingBtn: {
-      paddingVertical: 10,
-      paddingHorizontal: 12,
-      borderRadius: 10,
+      paddingVertical: 12,
+      paddingHorizontal: 16,
+      borderRadius: theme.buttonRadius,
       alignItems: "center",
       justifyContent: "center",
       minWidth: 120,
     },
-
-    momentsWrap: { marginTop: 16 },
-    momentCard: {
-      width: 140,
-      height: 100,
-      borderRadius: 10,
-      overflow: "hidden",
-      marginRight: 12,
-      backgroundColor: "#eee",
+    deviceStatusRow: {
+      flexDirection: "row",
+      gap: 12,
+      flexWrap: "wrap",
+      alignItems: "center",
     },
-    momentImage: { width: "100%", height: "100%" },
 
     footer: {
       marginTop: 24,
       paddingVertical: 18,
       borderTopWidth: 1,
-      borderTopColor: "#eef3f4",
+      borderTopColor: theme.border,
       backgroundColor: "transparent",
     },
     footerText: { color: theme.textMuted, fontSize: 12, textAlign: "center" },
@@ -352,10 +357,12 @@ function DeviceDetailsModal({
   visible,
   onClose,
   state,
+  theme,
 }: {
   visible: boolean;
   onClose: () => void;
   state: any;
+  theme: Theme;
 }) {
   const [mockOn, setMockOn] = useState<boolean>(!!state?.mockMode);
   useEffect(() => setMockOn(!!state?.mockMode), [state?.mockMode]);
@@ -370,9 +377,15 @@ function DeviceDetailsModal({
     }
   };
 
-  const sendCueLocal = (type: "vibrate" | "beep" | "tone") => {
-    bleManager.sendCue?.(type);
-    Alert.alert("Sent", `Cue: ${type}`);
+  const sendCueLocal = async (type: "vibrate" | "beep" | "tone") => {
+    const vibration = type === "vibrate" ? "gentle" : "pulse";
+    try {
+      await bleManager.sendComfortSignal?.("dog", { vibration });
+      Alert.alert("Comfort", `Sent ${type} cue`);
+    } catch (e) {
+      console.warn(e);
+      Alert.alert("Comfort", "Failed to send cue");
+    }
   };
 
   const copyLogs = async () => {
@@ -397,17 +410,23 @@ function DeviceDetailsModal({
       <View
         style={{
           flex: 1,
-          backgroundColor: "rgba(0,0,0,0.55)",
+          backgroundColor: "rgba(0,0,0,0.7)",
           justifyContent: "flex-end",
         }}
       >
         <View
           style={{
             maxHeight: "82%",
-            backgroundColor: "#fff",
-            borderTopLeftRadius: 12,
-            borderTopRightRadius: 12,
-            padding: 16,
+            backgroundColor: theme.card,
+            borderTopLeftRadius: 20,
+            borderTopRightRadius: 20,
+            padding: 18,
+            borderWidth: 1,
+            borderColor: theme.border,
+            shadowColor: "#000",
+            shadowOpacity: 0.5,
+            shadowRadius: 22,
+            shadowOffset: { width: 0, height: -4 },
           }}
         >
           <View
@@ -417,30 +436,30 @@ function DeviceDetailsModal({
               alignItems: "center",
             }}
           >
-            <Text style={{ fontWeight: "800", fontSize: 16 }}>
+            <Text style={{ fontWeight: "800", fontSize: 16, color: theme.textDark }}>
               Device Details
             </Text>
             <Pressable onPress={onClose}>
-              <MaterialIcons name="close" size={20} />
+              <MaterialIcons name="close" size={20} color={theme.textDark} />
             </Pressable>
           </View>
 
           <View style={{ marginTop: 12 }}>
-            <Text style={{ fontWeight: "700" }}>
+            <Text style={{ fontWeight: "700", color: theme.textDark }}>
               {state.assignedProfile
                 ? `${state.assignedProfile}`
                 : "Unassigned"}
             </Text>
-            <Text style={{ color: "#64748b", marginTop: 4 }}>
+            <Text style={{ color: theme.textMuted, marginTop: 4 }}>
               {state.isConnected ? "Connected" : "Not connected"}
             </Text>
-            <Text style={{ color: "#64748b", marginTop: 6 }}>
+            <Text style={{ color: theme.textMuted, marginTop: 6 }}>
               Battery: {state.human?.battery ?? state.dog?.battery ?? "--"}%
             </Text>
-            <Text style={{ color: "#64748b", marginTop: 2 }}>
+            <Text style={{ color: theme.textMuted, marginTop: 2 }}>
               RSSI: {(state as any).rssi ?? (bleManager as any).rssi ?? "--"}
             </Text>
-            <Text style={{ color: "#64748b", marginTop: 2 }}>
+            <Text style={{ color: theme.textMuted, marginTop: 2 }}>
               FW: {state?.firmwareVersion ?? "--"}
             </Text>
           </View>
@@ -449,69 +468,75 @@ function DeviceDetailsModal({
             <TouchableOpacity
               onPress={() => bleManager.manualFetch?.()}
               style={{
-                backgroundColor: "#f3f4f6",
+                backgroundColor: theme.softPrimary,
                 padding: 10,
-                borderRadius: 8,
+                borderRadius: theme.buttonRadius,
               }}
             >
-              <Text>Force Sync</Text>
+              <Text style={{ color: theme.textDark, fontWeight: "600" }}>Force Sync</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
               onPress={() => bleManager.connect?.()}
               style={{
-                backgroundColor: "#f3f4f6",
+                backgroundColor: theme.softPrimary,
                 padding: 10,
-                borderRadius: 8,
+                borderRadius: theme.buttonRadius,
               }}
             >
-              <Text>Connect</Text>
+              <Text style={{ color: theme.textDark, fontWeight: "600" }}>Connect</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
               onPress={() => bleManager.disconnect?.()}
               style={{
-                backgroundColor: "#f3f4f6",
+                backgroundColor: theme.softPrimary,
                 padding: 10,
-                borderRadius: 8,
+                borderRadius: theme.buttonRadius,
               }}
             >
-              <Text>Disconnect</Text>
+              <Text style={{ color: theme.textDark, fontWeight: "600" }}>Disconnect</Text>
             </TouchableOpacity>
           </View>
 
           <View style={{ marginTop: 14 }}>
-            <Text style={{ fontWeight: "700", marginBottom: 8 }}>Cues</Text>
+            <Text style={{ fontWeight: "700", marginBottom: 8, color: theme.textDark }}>Cues</Text>
             <View style={{ flexDirection: "row", gap: 8 }}>
               <TouchableOpacity
                 onPress={() => sendCueLocal("vibrate")}
                 style={{
                   padding: 10,
-                  backgroundColor: "#eef2ff",
-                  borderRadius: 8,
+                  backgroundColor: theme.glassBackground,
+                  borderRadius: theme.buttonRadius,
+                  borderWidth: 1,
+                  borderColor: theme.glassBorder,
                 }}
               >
-                <Text>Vibrate</Text>
+                <Text style={{ color: theme.textDark }}>Vibrate</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => sendCueLocal("beep")}
                 style={{
                   padding: 10,
-                  backgroundColor: "#eef2ff",
-                  borderRadius: 8,
+                  backgroundColor: theme.glassBackground,
+                  borderRadius: theme.buttonRadius,
+                  borderWidth: 1,
+                  borderColor: theme.glassBorder,
                 }}
               >
-                <Text>Beep</Text>
+                <Text style={{ color: theme.textDark }}>Beep</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => sendCueLocal("tone")}
                 style={{
                   padding: 10,
-                  backgroundColor: "#eef2ff",
-                  borderRadius: 8,
+                  backgroundColor: theme.glassBackground,
+                  borderRadius: theme.buttonRadius,
+                  borderWidth: 1,
+                  borderColor: theme.glassBorder,
                 }}
               >
-                <Text>Tone</Text>
+                <Text style={{ color: theme.textDark }}>Tone</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -524,7 +549,7 @@ function DeviceDetailsModal({
               alignItems: "center",
             }}
           >
-            <Text style={{ fontWeight: "700" }}>Developer mock mode</Text>
+            <Text style={{ fontWeight: "700", color: theme.textDark }}>Developer mock mode</Text>
             <Switch value={mockOn} onValueChange={toggleMock} />
           </View>
 
@@ -532,34 +557,34 @@ function DeviceDetailsModal({
             <TouchableOpacity
               onPress={copyLogs}
               style={{
-                backgroundColor: "#f3f4f6",
+                backgroundColor: theme.softPrimary,
                 padding: 10,
-                borderRadius: 8,
+                borderRadius: theme.buttonRadius,
               }}
             >
-              <Text>Show Logs</Text>
+              <Text style={{ color: theme.textDark, fontWeight: "600" }}>Show Logs</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
               onPress={() => assignTo("human")}
               style={{
-                backgroundColor: "#f3f4f6",
+                backgroundColor: theme.softPrimary,
                 padding: 10,
-                borderRadius: 8,
+                borderRadius: theme.buttonRadius,
               }}
             >
-              <Text>Assign → Me</Text>
+              <Text style={{ color: theme.textDark, fontWeight: "600" }}>Assign → Me</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
               onPress={() => assignTo("dog")}
               style={{
-                backgroundColor: "#f3f4f6",
+                backgroundColor: theme.softPrimary,
                 padding: 10,
-                borderRadius: 8,
+                borderRadius: theme.buttonRadius,
               }}
             >
-              <Text>Assign → Dog</Text>
+              <Text style={{ color: theme.textDark, fontWeight: "600" }}>Assign → Dog</Text>
             </TouchableOpacity>
           </View>
 
@@ -580,7 +605,7 @@ function AnimatedFeatureCard({
   style?: any;
   title: string;
   text: string;
-  theme: typeof dogTheme;
+  theme: Theme;
 }) {
   const anim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
@@ -609,17 +634,23 @@ function AnimatedFeatureCard({
         },
       ]}
     >
-      <Text
-        style={{
-          fontWeight: "800",
-          fontSize: 16,
-          color: theme.textDark,
-          marginBottom: 6,
-        }}
-      >
-        {title}
-      </Text>
-      <Text style={{ color: theme.textMuted }}>{text}</Text>
+      <LinearGradient
+        colors={[theme.card, theme.cardElevated]}
+        style={StyleSheet.absoluteFillObject}
+      />
+      <View style={{ padding: 16 }}>
+        <Text
+          style={{
+            fontWeight: "800",
+            fontSize: 16,
+            color: theme.textDark,
+            marginBottom: 6,
+          }}
+        >
+          {title}
+        </Text>
+        <Text style={{ color: theme.textMuted }}>{text}</Text>
+      </View>
     </Animated.View>
   );
 }
@@ -627,6 +658,20 @@ function AnimatedFeatureCard({
 /* ---------- Main Home component (simplified connect UX) ---------- */
 export default function Home({ navigation }: Props) {
   // ---------- THREE RING DISPLAY WITH TRIANGULAR LAYOUT + CENTER ENLARGE ----------
+  const router = useRouter();
+  const { theme: activeTheme } = useTheme();
+  const [connectionState, setConnectionState] = useState<
+    ReturnType<typeof bleManager.getConnections> | undefined
+  >(bleManager.getConnections?.());
+  useEffect(() => {
+    const handler = (snapshot: any) => setConnectionState(snapshot);
+    (bleManager as any).on?.("connections", handler);
+    return () => {
+      (bleManager as any).off?.("connections", handler);
+    };
+  }, []);
+  const dogOnline = !!connectionState?.connected?.dog;
+  const vestOnline = !!connectionState?.connected?.vest;
 
   const [ringScores, setRingScores] = useState({
     sleep: 0, // Bond
@@ -647,7 +692,9 @@ export default function Home({ navigation }: Props) {
       });
     };
     bleManager.on("data", fn);
-    return () => bleManager.off("data", fn);
+    return () => {
+      bleManager.off("data", fn);
+    };
   }, []);
 
   // sizes
@@ -848,10 +895,10 @@ export default function Home({ navigation }: Props) {
               alignItems: "center",
             }}
           >
-            <Text style={{ color: "white", fontSize: 20, fontWeight: "900" }}>
+            <Text style={{ color: activeTheme.textDark, fontSize: 20, fontWeight: "900" }}>
               {value}%
             </Text>
-            <Text style={{ color: "white", fontSize: 12, opacity: 0.9 }}>
+            <Text style={{ color: activeTheme.textMuted, fontSize: 12 }}>
               {label}
             </Text>
           </View>
@@ -864,10 +911,10 @@ export default function Home({ navigation }: Props) {
               marginTop: 16,
               paddingVertical: 10,
               paddingHorizontal: 14,
-              backgroundColor: "rgba(255,255,255,0.15)",
+              backgroundColor: activeTheme.glassBackground,
               borderRadius: 12,
               maxWidth: 280,
-               width: 280,
+              width: 280,
               opacity: ringScale[i].interpolate({
                 inputRange: [1, enlarge],
                 outputRange: [0, 1],
@@ -878,9 +925,11 @@ export default function Home({ navigation }: Props) {
               top: size + 5, // appear below the ring
               left: "25%",
               transform: [{ translateX: -110 }], // center horizontally
+              borderWidth: 1,
+              borderColor: activeTheme.glassBorder,
             }}
           >
-            <Text style={{ color: "white", fontSize: 11, lineHeight: 18 }}>
+            <Text style={{ color: activeTheme.textDark, fontSize: 11, lineHeight: 18 }}>
               {getSuggestion(i, value)}
             </Text>
           </Animated.View>
@@ -901,25 +950,24 @@ export default function Home({ navigation }: Props) {
         marginTop: 10,
       }}
     >
-      <Ring i={0} label="Bond Score" value={ringScores.sleep} color="#6C63FF" />
+      <Ring i={0} label="Bond Score" value={ringScores.sleep} color={activeTheme.secondary} />
       <Ring
         i={1}
         label="Dog Health"
         value={ringScores.recovery}
-        color="#10B981"
+        color={activeTheme.primary}
       />
       <Ring
         i={2}
         label="Human Health"
         value={ringScores.strain}
-        color="#FB7185"
+        color={activeTheme.electric}
       />
     </View>
   );
   ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-  const { theme: activeTheme } = useTheme(); // ← cleaned version
   const styles = useMemo(() => createStyles(activeTheme), [activeTheme]);
 
   // parallax & anim
@@ -961,19 +1009,19 @@ export default function Home({ navigation }: Props) {
     {
       title: "Track & Train",
       text: "Real-time telemetry for your dog. Heart rate, activity, and AI-driven training suggestions.",
-      icon: <MaterialCommunityIcons name="pulse" size={42} color="#fff" />,
+      icon: <MaterialCommunityIcons name="pulse" size={42} color={activeTheme.textOnPrimary} />,
     },
     {
       title: "Smart Device",
       text: "Connect with your dog and track it's health",
       icon: (
-        <MaterialCommunityIcons name="link-variant" size={42} color="#fff" />
+        <MaterialCommunityIcons name="link-variant" size={42} color={activeTheme.textOnPrimary} />
       ),
     },
     {
       title: "BondAI Chat",
       text: "Ask BondAI for training tips, health insights and quick exercises — contextual to your device data.",
-      icon: <MaterialIcons name="chat" size={42} color="#fff" />,
+      icon: <MaterialIcons name="chat" size={42} color={activeTheme.textOnPrimary} />,
     },
   ];
 
@@ -1037,9 +1085,20 @@ export default function Home({ navigation }: Props) {
 
   // training actions
   const startTraining = useCallback(() => {
+    if (
+      !bleManager.isRoleConnected?.("dog") ||
+      !bleManager.isRoleConnected?.("vest")
+    ) {
+      Alert.alert(
+        "Devices required",
+        "Connect both the dog collar and therapy vest before starting a session."
+      );
+      return;
+    }
     try {
       bleManager.startTrainingSession?.();
       setIsTraining(true);
+      bleManager.sendComfortSignal?.("dog", { vibration: "gentle" });
       Alert.alert("Training", "Training started.");
     } catch (e) {
       console.warn(e);
@@ -1049,18 +1108,27 @@ export default function Home({ navigation }: Props) {
     try {
       bleManager.stopTrainingSession?.();
       setIsTraining(false);
+      bleManager.sendComfortSignal?.("human", { vibration: "pulse" });
       Alert.alert("Training", "Training stopped.");
     } catch (e) {
       console.warn(e);
     }
   }, []);
-  const sendCue = useCallback(
-    (type: "vibrate" | "beep" | "tone" = "vibrate") => {
+  const sendComfort = useCallback(
+    async (target: "dog" | "human", vibration: "gentle" | "pulse" = "gentle") => {
+      if (!bleManager.isRoleConnected?.("vest")) {
+        Alert.alert("Therapy Vest", "Connect the therapy vest before sending comfort signals.");
+        return;
+      }
       try {
-        bleManager.sendCue?.(type);
-        Alert.alert("Cue", `Sent ${type}`);
+        await bleManager.sendComfortSignal?.(target, { vibration });
+        Alert.alert(
+          "Comfort",
+          target === "dog" ? "Comfort signal sent to Bodhi." : "Comfort signal sent to you."
+        );
       } catch (e) {
-        console.warn(e);
+        console.warn("Comfort signal failed", e);
+        Alert.alert("Comfort", "Failed to send comfort signal.");
       }
     },
     []
@@ -1078,8 +1146,12 @@ export default function Home({ navigation }: Props) {
 
   // simple Pair action (opens Pairing screen)
   const onPair = useCallback(() => {
-    navigation.navigate("Pairing");
-  }, [navigation]);
+    if (navigation) {
+      navigation.navigate("Pairing");
+    } else {
+      router.push("/pairing");
+    }
+  }, [navigation, router]);
 
   // Device meta helpers (defensive casts)
   const assignedName = deviceState.assignedProfile
@@ -1117,7 +1189,13 @@ export default function Home({ navigation }: Props) {
         {/* small header actions */}
         <View style={{ flexDirection: "row", gap: 10 }}>
           <TouchableOpacity
-            onPress={() => navigation.navigate("BondAI")}
+            onPress={() => {
+              if (navigation) {
+                navigation.navigate("BondAI");
+              } else {
+                router.push("/(tabs)/bondai");
+              }
+            }}
             style={{ padding: 8 }}
             accessibilityLabel="Open BondAI"
           >
@@ -1125,7 +1203,13 @@ export default function Home({ navigation }: Props) {
           </TouchableOpacity>
 
           <TouchableOpacity
-            onPress={() => navigation.navigate("Settings")}
+            onPress={() => {
+              if (navigation) {
+                navigation.navigate("Settings");
+              } else {
+                router.push("/(tabs)/settings");
+              }
+            }}
             style={{ padding: 8 }}
             accessibilityLabel="Settings"
           >
@@ -1191,14 +1275,19 @@ export default function Home({ navigation }: Props) {
           onPress={() => setDeviceModalOpen(true)}
           activeOpacity={0.95}
         >
-          <View style={styles.deviceStrip}>
+          <LinearGradient
+            colors={[activeTheme.card, activeTheme.cardElevated]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.deviceStrip}
+          >
             <View style={styles.deviceLeft}>
               <View
                 style={{
                   width: 12,
                   height: 12,
                   borderRadius: 12,
-                  backgroundColor: connected ? "#2ecc71" : "#ff7a6b",
+                  backgroundColor: connected ? activeTheme.green : activeTheme.alert,
                 }}
               />
               <View>
@@ -1225,7 +1314,11 @@ export default function Home({ navigation }: Props) {
                   style={{
                     backgroundColor: activeTheme.primary,
                     padding: 10,
-                    borderRadius: 10,
+                    borderRadius: activeTheme.buttonRadius,
+                    shadowColor: activeTheme.primary,
+                    shadowOpacity: 0.45,
+                    shadowRadius: 12,
+                    shadowOffset: { width: 0, height: 4 },
                   }}
                 >
                   <View
@@ -1238,9 +1331,9 @@ export default function Home({ navigation }: Props) {
                     <MaterialCommunityIcons
                       name="bluetooth"
                       size={16}
-                      color="#fff"
+                      color={activeTheme.textOnPrimary}
                     />
-                    <Text style={{ color: "#fff", fontWeight: "700" }}>
+                    <Text style={{ color: activeTheme.textOnPrimary, fontWeight: "700" }}>
                       Pair
                     </Text>
                   </View>
@@ -1252,7 +1345,9 @@ export default function Home({ navigation }: Props) {
                     style={{
                       backgroundColor: activeTheme.card,
                       padding: 10,
-                      borderRadius: 10,
+                      borderRadius: activeTheme.buttonRadius,
+                      borderWidth: 1,
+                      borderColor: activeTheme.border,
                     }}
                   >
                     <View
@@ -1288,7 +1383,11 @@ export default function Home({ navigation }: Props) {
                         ? activeTheme.orange
                         : activeTheme.primary,
                       padding: 10,
-                      borderRadius: 10,
+                      borderRadius: activeTheme.buttonRadius,
+                      shadowColor: isTraining ? activeTheme.orange : activeTheme.primary,
+                      shadowOpacity: 0.4,
+                      shadowRadius: 12,
+                      shadowOffset: { width: 0, height: 4 },
                     }}
                   >
                     <View
@@ -1298,8 +1397,8 @@ export default function Home({ navigation }: Props) {
                         gap: 8,
                       }}
                     >
-                      <FontAwesome5 name="running" size={12} color="#fff" />
-                      <Text style={{ color: "#fff", fontWeight: "700" }}>
+                      <FontAwesome5 name="running" size={12} color={activeTheme.textOnPrimary} />
+                      <Text style={{ color: activeTheme.textOnPrimary, fontWeight: "700" }}>
                         {isTraining ? "Stop" : "Start"}
                       </Text>
                     </View>
@@ -1307,11 +1406,16 @@ export default function Home({ navigation }: Props) {
                 </>
               )}
             </View>
-          </View>
+          </LinearGradient>
         </TouchableOpacity>
 
         {/* Onboarding carousel */}
-        <View style={styles.onboardingWrap}>
+        <LinearGradient
+          colors={[activeTheme.card, activeTheme.cardElevated]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.onboardingWrap}
+        >
           <Animated.ScrollView
             ref={carouselRef}
             horizontal
@@ -1344,13 +1448,24 @@ export default function Home({ navigation }: Props) {
 
                 <AnimatedButton
                   onPress={() => {
-                    if (i === 0) navigation.navigate("Pairing");
-                    else if (i === 1)
+                    if (i === 0) {
+                      if (navigation) {
+                        navigation.navigate("Pairing");
+                      } else {
+                        router.push("/pairing");
+                      }
+                    } else if (i === 1)
                       Alert.alert(
                         "Dual Devices",
                         "Learn more about connecting two devices"
                       );
-                    else navigation.navigate("BondAI");
+                    else {
+                      if (navigation) {
+                        navigation.navigate("BondAI");
+                      } else {
+                        router.push("/(tabs)/bondai");
+                      }
+                    }
                   }}
                   style={{ marginTop: 12 }}
                 >
@@ -1359,15 +1474,19 @@ export default function Home({ navigation }: Props) {
                       backgroundColor: activeTheme.primary,
                       paddingHorizontal: 16,
                       paddingVertical: 10,
-                      borderRadius: 10,
+                      borderRadius: activeTheme.buttonRadius,
+                      shadowColor: activeTheme.primary,
+                      shadowOpacity: 0.35,
+                      shadowRadius: 10,
+                      shadowOffset: { width: 0, height: 4 },
                     }}
                   >
-                    <Text style={{ color: "#fff", fontWeight: "800" }}>
+                    <Text style={{ color: activeTheme.textOnPrimary, fontWeight: "800" }}>
                       {i === 0
                         ? "Pair Now"
                         : i === 1
-                        ? "Learn More"
-                        : "Chat with BondAI"}
+                          ? "Learn More"
+                          : "Chat with BondAI"}
                     </Text>
                   </View>
                 </AnimatedButton>
@@ -1385,9 +1504,10 @@ export default function Home({ navigation }: Props) {
                   extrapolate: "clamp",
                 }) as any
               }
+              theme={activeTheme}
             />
           </View>
-        </View>
+        </LinearGradient>
 
         {/* Bond Score Rings - 3 separate circles */}
         <View
@@ -1412,38 +1532,78 @@ export default function Home({ navigation }: Props) {
           >
             Quick Training
           </Text>
+          <View style={styles.deviceStatusRow}>
+            <Text
+              style={{
+                color: dogOnline ? activeTheme.primary : activeTheme.textMuted,
+                fontSize: 12,
+              }}
+            >
+              Collar {dogOnline ? "connected" : "not connected"}
+            </Text>
+            <Text
+              style={{
+                color: vestOnline ? activeTheme.primary : activeTheme.textMuted,
+                fontSize: 12,
+              }}
+            >
+              Vest {vestOnline ? "connected" : "not connected"}
+            </Text>
+          </View>
           <View style={styles.trainingRow}>
             <TouchableOpacity
               onPress={() => (isTraining ? stopTraining() : startTraining())}
+              disabled={!dogOnline || !vestOnline}
               style={[
                 styles.trainingBtn,
                 {
                   backgroundColor: isTraining
                     ? activeTheme.orange
                     : activeTheme.primary,
+                  opacity: dogOnline && vestOnline ? 1 : 0.5,
                 },
               ]}
             >
-              <Text style={{ color: "#fff", fontWeight: "800" }}>
+              <Text style={{ color: activeTheme.textOnPrimary, fontWeight: "800" }}>
                 {isTraining ? "Stop Session" : "Start Session"}
               </Text>
             </TouchableOpacity>
 
-            {/* Keep cue buttons secondary and hidden behind device details — simple placeholder */}
             <TouchableOpacity
-              onPress={() => sendCue("vibrate")}
+              onPress={() => sendComfort("dog", "gentle")}
+              disabled={!vestOnline}
               style={[
                 styles.trainingBtn,
                 {
                   backgroundColor: activeTheme.card,
                   borderWidth: 1,
-                  borderColor: "rgba(0,0,0,0.06)",
+                  borderColor: activeTheme.border,
+                  opacity: vestOnline ? 1 : 0.5,
                 },
               ]}
             >
-              <Text style={{ color: activeTheme.textDark }}>Quick Cue</Text>
+              <Text style={{ color: activeTheme.textDark }}>Comfort Dog</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => sendComfort("human", "pulse")}
+              disabled={!vestOnline}
+              style={[
+                styles.trainingBtn,
+                {
+                  backgroundColor: activeTheme.card,
+                  borderWidth: 1,
+                  borderColor: activeTheme.border,
+                  opacity: vestOnline ? 1 : 0.5,
+                },
+              ]}
+            >
+              <Text style={{ color: activeTheme.textDark }}>Comfort Human</Text>
             </TouchableOpacity>
           </View>
+          <Text style={{ color: activeTheme.textMuted, marginTop: 6, fontSize: 12 }}>
+            Comfort signals trigger the vest red light and gentle vibration for ~30 seconds.
+          </Text>
 
           <View style={{ marginTop: 12 }}>
             <Text style={{ color: activeTheme.textMuted, marginBottom: 8 }}>
@@ -1495,61 +1655,11 @@ export default function Home({ navigation }: Props) {
           </View>
         </View>
 
-        {/* Moments */}
-        <View style={styles.momentsWrap}>
-          <Text
-            style={{
-              fontWeight: "800",
-              color: activeTheme.textDark,
-              marginBottom: 8,
-            }}
-          >
-            Moments
-          </Text>
-          <Animated.ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            onScroll={Animated.event(
-              [{ nativeEvent: { contentOffset: { x: momentScrollX } } }],
-              { useNativeDriver: true }
-            )}
-            scrollEventThrottle={16}
-            contentContainerStyle={{ paddingVertical: 8 }}
-          >
-            {momentsDog.map((img: any, i: number) => {
-              const inputRange = [(i - 1) * 156, i * 156, (i + 1) * 156];
-              const scale = momentScrollX.interpolate({
-                inputRange,
-                outputRange: [0.9, 1.05, 0.9],
-                extrapolate: "clamp",
-              });
-              const translateY = momentScrollX.interpolate({
-                inputRange,
-                outputRange: [6, 0, 6],
-                extrapolate: "clamp",
-              });
-              return (
-                <TouchableOpacity key={i} activeOpacity={0.9}>
-                  <Animated.View
-                    style={[
-                      styles.momentCard,
-                      { transform: [{ scale }, { translateY }] },
-                    ]}
-                  >
-                    <Image source={img} style={styles.momentImage} />
-                  </Animated.View>
-                </TouchableOpacity>
-              );
-            })}
-          </Animated.ScrollView>
-        </View>
-
         {/* Footer */}
         <View style={styles.footer}>
           <Text style={styles.footerText}>
             Version:{" "}
-            {Constants.manifest?.version ??
-              Constants.manifest?.expo?.version ??
+            {Constants.expoConfig?.version ??
               "1.0.0"}
           </Text>
           <Text style={[styles.footerText, { marginTop: 6 }]}>
@@ -1565,6 +1675,7 @@ export default function Home({ navigation }: Props) {
         visible={deviceModalOpen}
         onClose={() => setDeviceModalOpen(false)}
         state={deviceState}
+        theme={activeTheme}
       />
     </SafeAreaView>
   );

@@ -1,5 +1,5 @@
 // src/screens/Settings.tsx
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -10,12 +10,15 @@ import {
   TextInput,
   Alert,
   Platform,
-  Linking,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useFocusEffect } from "@react-navigation/native";
+import { useRouter } from "expo-router";
 import { bleManager } from "../ble/BLEManager";
 import { useTheme } from "../ThemeProvider";
 import { Theme } from "../theme";
+import { SETTINGS_STORAGE_KEY } from "../storage/constants";
+import { loadPairedDevices, savePairedDevice } from "../storage/pairedDevices";
 
 /**
  * Settings screen with lightweight BLE integration.
@@ -23,7 +26,7 @@ import { Theme } from "../theme";
  */
 
 type Role = "human" | "dog";
-const STORAGE_KEY = "@app_settings_v1";
+const STORAGE_KEY = SETTINGS_STORAGE_KEY;
 
 export default function Settings() {
   const { theme } = useTheme();
@@ -38,24 +41,18 @@ export default function Settings() {
     vest?: { id?: string; name?: string };
   }>({});
 
-  const scanTargetRef = useRef<"dog" | "human" | "vest" | null>(null);
-
   const [autoConnect, setAutoConnect] = useState<boolean>(true);
   const [keepBleAlive, setKeepBleAlive] = useState<boolean>(false);
-  const [unitsMetric, setUnitsMetric] = useState<boolean>(true);
   const [notificationsEnabled, setNotificationsEnabled] = useState<boolean>(true);
   const [hrAlertEnabled, setHrAlertEnabled] = useState<boolean>(false);
   const [hrAlertThreshold, setHrAlertThreshold] = useState<string>("140");
   const [autoSync, setAutoSync] = useState<boolean>(true);
-  const [shareData, setShareData] = useState<boolean>(false);
-  const [themeDog, setThemeDog] = useState<boolean>(true);
-  const [sdkInfoCollapsed, setSdkInfoCollapsed] = useState<boolean>(true);
   const [loading, setLoading] = useState<boolean>(true);
 
-  // BLE scanning state
-  const [scanning, setScanning] = useState<boolean>(false);
-  const discoveredRef = useRef<Array<{ id?: string; name: string }>>([]);
-  const scanTimerRef = useRef<any>(null);
+  const router = useRouter();
+  const [connectionSnapshot, setConnectionSnapshot] = useState<
+    ReturnType<typeof bleManager.getConnections> | undefined
+  >(bleManager.getConnections?.());
 
   // ---------- load saved settings ----------
   useEffect(() => {
@@ -70,13 +67,10 @@ export default function Settings() {
           setPairedDevices(parsed.pairedDevices ?? {});
           setAutoConnect(parsed.autoConnect ?? true);
           setKeepBleAlive(parsed.keepBleAlive ?? false);
-          setUnitsMetric(parsed.unitsMetric ?? true);
           setNotificationsEnabled(parsed.notificationsEnabled ?? true);
           setHrAlertEnabled(parsed.hrAlertEnabled ?? false);
           setHrAlertThreshold(parsed.hrAlertThreshold ?? "140");
           setAutoSync(parsed.autoSync ?? true);
-          setShareData(parsed.shareData ?? false);
-          setThemeDog(parsed.themeDog ?? true);
         }
       } catch (e) {
         console.warn("Settings: failed to load storage", e);
@@ -88,9 +82,7 @@ export default function Settings() {
     // cleanup listeners if any on unmount
     return () => {
       mounted = false;
-      stopScanIfRunning();
       try {
-        (bleManager as any)?.off?.("device", onDeviceDiscovered);
         (bleManager as any)?.off?.("connected", onConnected);
         (bleManager as any)?.off?.("disconnected", onDisconnected);
       } catch (e) {
@@ -98,6 +90,36 @@ export default function Settings() {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      loadPairedDevices().then((map) => {
+        if (active && map) {
+          setPairedDevices(map);
+        }
+      });
+      const snapshot = bleManager.getConnections?.();
+      if (snapshot && active) {
+        setConnectionSnapshot(snapshot);
+      }
+      return () => {
+        active = false;
+      };
+    }, [])
+  );
+
+  useEffect(() => {
+    const handler = (snapshot: any) => setConnectionSnapshot(snapshot);
+    (bleManager as any).on?.("connections", handler);
+    return () => {
+      try {
+        (bleManager as any).off?.("connections", handler);
+      } catch (e) {
+        /* noop */
+      }
+    };
   }, []);
 
   // persist helper (stores pairedDevices now)
@@ -108,13 +130,10 @@ export default function Settings() {
       pairedDevices,
       autoConnect,
       keepBleAlive,
-      unitsMetric,
       notificationsEnabled,
       hrAlertEnabled,
       hrAlertThreshold,
       autoSync,
-      shareData,
-      themeDog,
     };
     try {
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
@@ -123,126 +142,6 @@ export default function Settings() {
     }
   };
 
-  // ---------------- BLE helpers ----------------
-
-  // callback: when a device is discovered during scanning
-  const onDeviceDiscovered = (device: any) => {
-    if (!device) return;
-    const normalized = {
-      id: device.id ?? device.identifier ?? undefined,
-      name: device.name ?? device.localName ?? device.model ?? "Unknown device",
-    };
-    const found = discoveredRef.current.some((d) => d.id && normalized.id && d.id === normalized.id);
-    if (!found) {
-      discoveredRef.current.push(normalized);
-      console.log("[Settings] discovered device:", normalized);
-    }
-  };
-
-  // start scanning for a specific device type (dog/human/vest)
-  const startScanFor = (type: "dog" | "human" | "vest", timeoutMs = 4000) => {
-    if (scanning) return;
-    discoveredRef.current = [];
-    setScanning(true);
-    scanTargetRef.current = type;
-    console.log(`[Settings] startScanFor(${type}) -> calling bleManager.startScan`);
-
-    try {
-      (bleManager as any)?.on?.("device", onDeviceDiscovered);
-      if ((bleManager as any)?.startScan) {
-        (bleManager as any).startScan();
-      } else if ((bleManager as any)?.scan) {
-        (bleManager as any).scan();
-      } else {
-        console.warn("bleManager.startScan / scan not implemented — ensure BLE manager exposes scanning.");
-      }
-    } catch (e) {
-      console.warn("startScanFor error", e);
-    }
-
-    if (scanTimerRef.current) clearTimeout(scanTimerRef.current);
-    scanTimerRef.current = setTimeout(async () => {
-      stopScanIfRunning();
-      const found = discoveredRef.current;
-      if (!found || found.length === 0) {
-        Alert.alert("No devices found", "No BLE devices were discovered. Make sure the device is advertising and try again.");
-        return;
-      }
-
-      // For now pick first found (we can show a list later)
-      const first = found[0];
-      Alert.alert(
-        "Device discovered",
-        `Found "${first.name}" — pair and connect this as ${type === "dog" ? "Dog" : type === "human" ? "Human" : "Vest"} device?`,
-        [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "Pair",
-            onPress: async () => {
-              try {
-                // try connect with the device id (if bleManager supports connectToDevice)
-                if (first.id && (bleManager as any)?.connectToDevice) {
-                  await (bleManager as any).connectToDevice(first.id);
-                } else if ((bleManager as any)?.connect) {
-                  await (bleManager as any).connect?.();
-                }
-              } catch (e) {
-                console.warn("Pair/connect failed (non-fatal):", e);
-              }
-
-              // assign profile if BLE manager supports it (keeps old behavior)
-              try {
-                if (type === "dog") (bleManager as any).assignProfile?.("dog");
-                else if (type === "human") (bleManager as any).assignProfile?.("human");
-              } catch (e) {
-                /* noop */
-              }
-
-              // persist locally in pairedDevices
-              const next = { ...(pairedDevices || {}) } as any;
-              if (type === "dog") next.dog = first;
-              if (type === "human") next.human = first;
-              if (type === "vest") next.vest = first;
-
-              setPairedDevices(next);
-              try {
-                // persist fully (merge with existing storage)
-                const raw = await AsyncStorage.getItem(STORAGE_KEY);
-                const base = raw ? JSON.parse(raw) : {};
-                base.pairedDevices = next;
-                await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(base));
-              } catch (e) {
-                console.warn("persist after pair failed", e);
-              }
-
-              Alert.alert("Paired", `Device "${first.name}" paired as ${type}.`);
-            },
-          },
-        ],
-        { cancelable: true }
-      );
-    }, timeoutMs);
-  };
-
-  const stopScanIfRunning = () => {
-    if (!scanning) return;
-    setScanning(false);
-    scanTargetRef.current = null;
-    try {
-      if ((bleManager as any)?.stopScan) {
-        (bleManager as any).stopScan();
-      } else if ((bleManager as any)?.stop) {
-        (bleManager as any).stop();
-      }
-      (bleManager as any)?.off?.("device", onDeviceDiscovered);
-    } catch (e) {
-      console.warn("stopScanIfRunning error", e);
-    }
-    if (scanTimerRef.current) {
-      clearTimeout(scanTimerRef.current);
-      scanTimerRef.current = null;
-    }
-  };
 
   // connect event handlers for notifications
   const onConnected = (info: any) => {
@@ -267,24 +166,38 @@ export default function Settings() {
         (bleManager as any).on?.("disconnected", onDisconnected);
 
         // Attempt connects for paired devices (best-effort)
-        const tryConnect = async (id?: string) => {
+        const tryConnect = async (id: string | undefined, name: string | undefined, type: "dog" | "human" | "vest") => {
           if (!id) return;
           try {
-            if ((bleManager as any)?.connectToDevice) {
-              await (bleManager as any).connectToDevice(id);
-            } else if ((bleManager as any)?.connect) {
-              await (bleManager as any).connect?.();
-            }
+            bleManager.assignDeviceType(
+              {
+                id,
+                name: name || `${type} Device`,
+                mac: id,
+                rssi: -60,
+              },
+              type
+            );
+            await bleManager.connectToScannedDevice(
+              {
+                id,
+                name: name || `${type} Device`,
+                mac: id,
+                rssi: -60,
+              },
+              type
+            );
+            console.log(`Auto-connected ${type} device`);
           } catch (e) {
-            console.warn("Auto-connect single device failed", e);
+            console.warn(`Auto-connect ${type} device failed`, e);
           }
         };
 
         // Dog is primary — attempt first
-        await tryConnect(pairedDevices.dog?.id);
+        await tryConnect(pairedDevices.dog?.id, pairedDevices.dog?.name, "dog");
         // then human & vest (optional)
-        await tryConnect(pairedDevices.human?.id);
-        await tryConnect(pairedDevices.vest?.id);
+        await tryConnect(pairedDevices.human?.id, pairedDevices.human?.name, "human");
+        await tryConnect(pairedDevices.vest?.id, pairedDevices.vest?.name, "vest");
       } catch (e) {
         console.warn("Auto-connect failed", e);
       }
@@ -324,14 +237,19 @@ export default function Settings() {
     }
   };
 
-  // Pair device flow (kept for backward compatibility, default to dog)
-  const handlePairDevice = async () => {
+  const openPairingManager = (type: "dog" | "human" | "vest") => {
     try {
-      startScanFor("dog", 4000);
-      Alert.alert("Scanning", "Scanning for nearby BLE devices for 4 seconds...");
+      router.push({ pathname: "/pairing", params: { target: type } });
     } catch (e) {
-      console.warn("handlePairDevice error", e);
-      Alert.alert("Error", "Failed to start BLE scan (see console).");
+      console.warn("navigation to pairing failed", e);
+    }
+  };
+
+  const openDashboard = () => {
+    try {
+      router.push("/(tabs)/dashboard");
+    } catch (e) {
+      console.warn("navigation to dashboard failed", e);
     }
   };
 
@@ -352,6 +270,7 @@ export default function Settings() {
       if (type === "human") delete next.human;
       if (type === "vest") delete next.vest;
       setPairedDevices(next);
+      await savePairedDevice(type, undefined);
       await persist();
       Alert.alert("Device", `${type} device unassigned.`);
     } catch (e) {
@@ -458,36 +377,69 @@ export default function Settings() {
 
         {/* DOG (primary) */}
         <Text style={[ui.label, { color: theme.textMuted, marginTop: 6 }]}>Dog device (GTL1)</Text>
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-          <Text style={[ui.valueText, { color: theme.textDark }]}>{pairedDevices.dog ? pairedDevices.dog.name : "Not paired"}</Text>
-          <View style={{ flexDirection: "row", gap: 8 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
+          <View>
+            <Text style={[ui.valueText, { color: theme.textDark }]}>{pairedDevices.dog ? pairedDevices.dog.name : "Not paired"}</Text>
+            <Text style={{ color: connectionSnapshot?.connected?.dog ? theme.primary : theme.textMuted, fontSize: 12, marginTop: 2 }}>
+              {connectionSnapshot?.connected?.dog ? "Connected" : "Not connected"}
+            </Text>
+          </View>
+          <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
             <TouchableOpacity
               style={[ui.primaryBtn, { backgroundColor: theme.primary }]}
-              onPress={() => startScanFor("dog", 4000)}
+              onPress={() => openPairingManager("dog")}
             >
-              <Text style={ui.primaryBtnText}>{pairedDevices.dog ? "Replace" : (scanning && scanTargetRef.current === "dog" ? "Scanning..." : "Pair")}</Text>
+              <Text style={ui.primaryBtnText}>{pairedDevices.dog ? "Manage" : "Pair"}</Text>
             </TouchableOpacity>
 
             {pairedDevices.dog ? (
               <TouchableOpacity
-                style={[ui.secondaryBtn, { marginLeft: 10, backgroundColor: theme.card, borderColor: theme.border }]}
+                style={[ui.secondaryBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
                 onPress={async () => {
                   try {
-                    if ((bleManager as any)?.connectToDevice && pairedDevices.dog?.id) await (bleManager as any).connectToDevice(pairedDevices.dog.id);
-                    else if ((bleManager as any)?.connect) await (bleManager as any).connect?.();
+                    if (pairedDevices.dog?.id) {
+                      bleManager.assignDeviceType(
+                        {
+                          id: pairedDevices.dog.id,
+                          name: pairedDevices.dog.name,
+                          mac: pairedDevices.dog.id,
+                          rssi: -60,
+                        },
+                        "dog"
+                      );
+                      await bleManager.connectToScannedDevice(
+                        {
+                          id: pairedDevices.dog.id,
+                          name: pairedDevices.dog.name,
+                          mac: pairedDevices.dog.id,
+                          rssi: -60,
+                        },
+                        "dog"
+                      );
+                      Alert.alert("Connected", "Dog device connected successfully.");
+                    } else {
+                      Alert.alert("Error", "No dog device paired.");
+                    }
                   } catch (e) {
                     console.warn("connect dog failed", e);
+                    Alert.alert("Error", `Failed to connect: ${String(e)}`);
                   }
-                  Alert.alert("Connect", "Tried connecting to dog device (see console).");
                 }}
               >
-                <Text style={[ui.secondaryBtnText, { color: theme.textDark }]}>Connect</Text>
+                <Text style={[ui.secondaryBtnText, { color: theme.textDark }]}>{connectionSnapshot?.connected?.dog ? "Reconnect" : "Connect"}</Text>
               </TouchableOpacity>
             ) : null}
 
+            <TouchableOpacity
+              style={[ui.secondaryBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
+              onPress={openDashboard}
+            >
+              <Text style={[ui.secondaryBtnText, { color: theme.textDark }]}>Dashboard</Text>
+            </TouchableOpacity>
+
             {pairedDevices.dog ? (
               <TouchableOpacity
-                style={[ui.ghostBtn, { marginLeft: 8, borderColor: theme.border, backgroundColor: theme.card }]}
+                style={[ui.ghostBtn, { borderColor: theme.border, backgroundColor: theme.card }]}
                 onPress={() => handleUnassign("dog")}
               >
                 <Text style={[ui.ghostBtnText, { color: theme.orange }]}>Unassign</Text>
@@ -498,36 +450,69 @@ export default function Settings() {
 
         {/* HUMAN */}
         <Text style={[ui.label, { color: theme.textMuted, marginTop: 12 }]}>Human device (GTS10)</Text>
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-          <Text style={[ui.valueText, { color: theme.textDark }]}>{pairedDevices.human ? pairedDevices.human.name : "Not paired"}</Text>
-          <View style={{ flexDirection: "row", gap: 8 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
+          <View>
+            <Text style={[ui.valueText, { color: theme.textDark }]}>{pairedDevices.human ? pairedDevices.human.name : "Not paired"}</Text>
+            <Text style={{ color: connectionSnapshot?.connected?.human ? theme.primary : theme.textMuted, fontSize: 12, marginTop: 2 }}>
+              {connectionSnapshot?.connected?.human ? "Connected" : "Not connected"}
+            </Text>
+          </View>
+          <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
             <TouchableOpacity
               style={[ui.primaryBtn, { backgroundColor: theme.primary }]}
-              onPress={() => startScanFor("human", 4000)}
+              onPress={() => openPairingManager("human")}
             >
-              <Text style={ui.primaryBtnText}>{pairedDevices.human ? "Replace" : (scanning && scanTargetRef.current === "human" ? "Scanning..." : "Pair")}</Text>
+              <Text style={ui.primaryBtnText}>{pairedDevices.human ? "Manage" : "Pair"}</Text>
             </TouchableOpacity>
 
             {pairedDevices.human ? (
               <TouchableOpacity
-                style={[ui.secondaryBtn, { marginLeft: 10, backgroundColor: theme.card, borderColor: theme.border }]}
+                style={[ui.secondaryBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
                 onPress={async () => {
                   try {
-                    if ((bleManager as any)?.connectToDevice && pairedDevices.human?.id) await (bleManager as any).connectToDevice(pairedDevices.human.id);
-                    else if ((bleManager as any)?.connect) await (bleManager as any).connect?.();
+                    if (pairedDevices.human?.id) {
+                      bleManager.assignDeviceType(
+                        {
+                          id: pairedDevices.human.id,
+                          name: pairedDevices.human.name,
+                          mac: pairedDevices.human.id,
+                          rssi: -60,
+                        },
+                        "human"
+                      );
+                      await bleManager.connectToScannedDevice(
+                        {
+                          id: pairedDevices.human.id,
+                          name: pairedDevices.human.name,
+                          mac: pairedDevices.human.id,
+                          rssi: -60,
+                        },
+                        "human"
+                      );
+                      Alert.alert("Connected", "Human device connected successfully.");
+                    } else {
+                      Alert.alert("Error", "No human device paired.");
+                    }
                   } catch (e) {
                     console.warn("connect human failed", e);
+                    Alert.alert("Error", `Failed to connect: ${String(e)}`);
                   }
-                  Alert.alert("Connect", "Tried connecting to human device (see console).");
                 }}
               >
-                <Text style={[ui.secondaryBtnText, { color: theme.textDark }]}>Connect</Text>
+                <Text style={[ui.secondaryBtnText, { color: theme.textDark }]}>{connectionSnapshot?.connected?.human ? "Reconnect" : "Connect"}</Text>
               </TouchableOpacity>
             ) : null}
 
+            <TouchableOpacity
+              style={[ui.secondaryBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
+              onPress={openDashboard}
+            >
+              <Text style={[ui.secondaryBtnText, { color: theme.textDark }]}>Dashboard</Text>
+            </TouchableOpacity>
+
             {pairedDevices.human ? (
               <TouchableOpacity
-                style={[ui.ghostBtn, { marginLeft: 8, borderColor: theme.border, backgroundColor: theme.card }]}
+                style={[ui.ghostBtn, { borderColor: theme.border, backgroundColor: theme.card }]}
                 onPress={() => handleUnassign("human")}
               >
                 <Text style={[ui.ghostBtnText, { color: theme.orange }]}>Unassign</Text>
@@ -538,36 +523,69 @@ export default function Settings() {
 
         {/* VEST */}
         <Text style={[ui.label, { color: theme.textMuted, marginTop: 12 }]}>Therapy Vest (DogGPT)</Text>
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-          <Text style={[ui.valueText, { color: theme.textDark }]}>{pairedDevices.vest ? pairedDevices.vest.name : "Not paired"}</Text>
-          <View style={{ flexDirection: "row", gap: 8 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
+          <View>
+            <Text style={[ui.valueText, { color: theme.textDark }]}>{pairedDevices.vest ? pairedDevices.vest.name : "Not paired"}</Text>
+            <Text style={{ color: connectionSnapshot?.connected?.vest ? theme.primary : theme.textMuted, fontSize: 12, marginTop: 2 }}>
+              {connectionSnapshot?.connected?.vest ? "Connected" : "Not connected"}
+            </Text>
+          </View>
+          <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
             <TouchableOpacity
               style={[ui.primaryBtn, { backgroundColor: theme.primary }]}
-              onPress={() => startScanFor("vest", 4000)}
+              onPress={() => openPairingManager("vest")}
             >
-              <Text style={ui.primaryBtnText}>{pairedDevices.vest ? "Replace" : (scanning && scanTargetRef.current === "vest" ? "Scanning..." : "Pair")}</Text>
+              <Text style={ui.primaryBtnText}>{pairedDevices.vest ? "Manage" : "Pair"}</Text>
             </TouchableOpacity>
 
             {pairedDevices.vest ? (
               <TouchableOpacity
-                style={[ui.secondaryBtn, { marginLeft: 10, backgroundColor: theme.card, borderColor: theme.border }]}
+                style={[ui.secondaryBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
                 onPress={async () => {
                   try {
-                    if ((bleManager as any)?.connectToDevice && pairedDevices.vest?.id) await (bleManager as any).connectToDevice(pairedDevices.vest.id);
-                    else if ((bleManager as any)?.connect) await (bleManager as any).connect?.();
+                    if (pairedDevices.vest?.id) {
+                      bleManager.assignDeviceType(
+                        {
+                          id: pairedDevices.vest.id,
+                          name: pairedDevices.vest.name,
+                          mac: pairedDevices.vest.id,
+                          rssi: -60,
+                        },
+                        "vest"
+                      );
+                      await bleManager.connectToScannedDevice(
+                        {
+                          id: pairedDevices.vest.id,
+                          name: pairedDevices.vest.name,
+                          mac: pairedDevices.vest.id,
+                          rssi: -60,
+                        },
+                        "vest"
+                      );
+                      Alert.alert("Connected", "Vest connected successfully.");
+                    } else {
+                      Alert.alert("Error", "No vest device paired.");
+                    }
                   } catch (e) {
                     console.warn("connect vest failed", e);
+                    Alert.alert("Error", `Failed to connect: ${String(e)}`);
                   }
-                  Alert.alert("Connect", "Tried connecting to vest (see console).");
                 }}
               >
-                <Text style={[ui.secondaryBtnText, { color: theme.textDark }]}>Connect</Text>
+                <Text style={[ui.secondaryBtnText, { color: theme.textDark }]}>{connectionSnapshot?.connected?.vest ? "Reconnect" : "Connect"}</Text>
               </TouchableOpacity>
             ) : null}
 
+            <TouchableOpacity
+              style={[ui.secondaryBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
+              onPress={openDashboard}
+            >
+              <Text style={[ui.secondaryBtnText, { color: theme.textDark }]}>Dashboard</Text>
+            </TouchableOpacity>
+
             {pairedDevices.vest ? (
               <TouchableOpacity
-                style={[ui.ghostBtn, { marginLeft: 8, borderColor: theme.border, backgroundColor: theme.card }]}
+                style={[ui.ghostBtn, { borderColor: theme.border, backgroundColor: theme.card }]}
                 onPress={() => handleUnassign("vest")}
               >
                 <Text style={[ui.ghostBtnText, { color: theme.orange }]}>Unassign</Text>
@@ -612,31 +630,6 @@ export default function Settings() {
         <Text style={[ui.hint, { color: theme.textMuted }]}>On iOS enable Background Modes → Bluetooth to keep connections alive in background.</Text>
       </View>
 
-      {/* Units */}
-      <View style={ui.section}>
-        <Text style={[ui.sectionTitle, { color: theme.textDark }]}>Units</Text>
-        <View style={ui.row}>
-          <TouchableOpacity
-            style={[ui.roleBtn, unitsMetric && { backgroundColor: theme.primary, borderColor: "transparent" }]}
-            onPress={() => {
-              setUnitsMetric(true);
-              persist();
-            }}
-          >
-            <Text style={unitsMetric ? ui.roleTextActive : [ui.roleText, { color: theme.textDark }]}>Metric</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[ui.roleBtn, !unitsMetric && { backgroundColor: theme.primary, borderColor: "transparent", marginLeft: 8 }, { marginLeft: !unitsMetric ? 8 : 8 }]}
-            onPress={() => {
-              setUnitsMetric(false);
-              persist();
-            }}
-          >
-            <Text style={!unitsMetric ? ui.roleTextActive : [ui.roleText, { color: theme.textDark }]}>Imperial</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
 
       {/* Notifications & Alerts */}
       <View style={ui.section}>
@@ -713,67 +706,6 @@ export default function Settings() {
         </View>
       </View>
 
-      {/* Privacy */}
-      <View style={ui.section}>
-        <Text style={[ui.sectionTitle, { color: theme.textDark }]}>Privacy</Text>
-
-        <View style={ui.settingRow}>
-          <Text style={[ui.settingLabel, { color: theme.textDark }]}>Share anonymized data</Text>
-          <Switch
-            value={shareData}
-            onValueChange={(v) => {
-              setShareData(v);
-              persist();
-            }}
-            trackColor={{ true: theme.primary, false: undefined }}
-            thumbColor={Platform.OS === "android" ? (shareData ? theme.primary : undefined) : undefined}
-          />
-        </View>
-
-        <Text style={[ui.hint, { color: theme.textMuted }]}>Sharing helps improve models. Revoke anytime.</Text>
-      </View>
-
-      {/* Theme */}
-      <View style={ui.section}>
-        <Text style={[ui.sectionTitle, { color: theme.textDark }]}>Theme</Text>
-        <View style={ui.row}>
-          <TouchableOpacity
-            style={[ui.roleBtn, themeDog && { backgroundColor: theme.primary, borderColor: "transparent" }]}
-            onPress={() => {
-              setThemeDog(true);
-              persist();
-            }}
-          >
-            <Text style={themeDog ? ui.roleTextActive : [ui.roleText, { color: theme.textDark }]}>Dog Theme</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[ui.roleBtn, !themeDog && { backgroundColor: theme.primary, borderColor: "transparent", marginLeft: 8 }, { marginLeft: !themeDog ? 8 : 8 }]}
-            onPress={() => {
-              setThemeDog(false);
-              persist();
-            }}
-          >
-            <Text style={!themeDog ? ui.roleTextActive : [ui.roleText, { color: theme.textDark }]}>Bond Theme</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {/* SDK & Device Info */}
-      <View style={ui.section}>
-        <TouchableOpacity onPress={() => setSdkInfoCollapsed((s) => !s)}>
-          <Text style={[ui.sectionTitle, { color: theme.textDark }]}>SDK & Device Info</Text>
-        </TouchableOpacity>
-
-        {!sdkInfoCollapsed && (
-          <View style={{ marginTop: 8 }}>
-            <Text style={[ui.hint, { color: theme.textMuted }]}>Runmefit SDK: GTS10/GTL1 support (STBleManager...)</Text>
-            <TouchableOpacity style={[ui.secondaryBtn, { marginTop: 12, backgroundColor: theme.card, borderColor: theme.border }]} onPress={handleOpenSdkDocs}>
-              <Text style={[ui.secondaryBtnText, { color: theme.textDark }]}>Open SDK Documentation</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-      </View>
 
       {/* Actions */}
       <View style={ui.section}>
@@ -782,13 +714,24 @@ export default function Settings() {
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[ui.primaryBtn, { marginTop: 12, backgroundColor: "#444" }]}
+          style={[
+            ui.primaryBtn,
+            {
+              marginTop: 12,
+              backgroundColor: theme.primary,
+              borderRadius: theme.buttonRadius,
+              shadowColor: theme.primary,
+              shadowOpacity: 0.35,
+              shadowRadius: 12,
+              shadowOffset: { width: 0, height: 4 },
+            },
+          ]}
           onPress={() => {
             persist();
             Alert.alert("Saved", "All preferences saved.");
           }}
         >
-          <Text style={ui.primaryBtnText}>Save</Text>
+          <Text style={[ui.primaryBtnText, { color: theme.textOnPrimary }]}>Save</Text>
         </TouchableOpacity>
       </View>
 
@@ -837,7 +780,7 @@ const ui = StyleSheet.create({
     // kept for backwards compatibility if needed
   },
   roleText: { fontWeight: "600" },
-  roleTextActive: { color: "#fff", fontWeight: "700" },
+  roleTextActive: { fontWeight: "700" },
 
   valueText: { fontSize: 15 },
 
@@ -848,7 +791,7 @@ const ui = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  primaryBtnText: { color: "#fff", fontWeight: "700" },
+  primaryBtnText: { fontWeight: "700" },
 
   secondaryBtn: {
     paddingVertical: 10,

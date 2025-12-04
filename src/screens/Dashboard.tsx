@@ -12,6 +12,7 @@ import {
   Alert,
   ScrollView,
 } from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
 import { MaterialIcons, FontAwesome5, MaterialCommunityIcons } from "@expo/vector-icons";
 import { bleManager } from "../ble/BLEManager";
 import { useTheme } from "../ThemeProvider";
@@ -99,7 +100,17 @@ function AnimatedPressable({ onPress, children, style }: { onPress?: () => void;
 }
 
 /* Small 7-day bar chart (re-usable) */
-function SevenDayBarChart({ data, color, height = 72 }: { data: number[]; color: string; height?: number }) {
+function SevenDayBarChart({
+  data,
+  colors,
+  height = 72,
+  labelColor,
+}: {
+  data: number[];
+  colors: string[];
+  height?: number;
+  labelColor: string;
+}) {
   const max = Math.max(...(data ?? []), 1);
   return (
     <View style={{ flexDirection: "row", alignItems: "flex-end", height }}>
@@ -107,8 +118,13 @@ function SevenDayBarChart({ data, color, height = 72 }: { data: number[]; color:
         const barH = Math.max(6, Math.round((v / max) * (height - 12)));
         return (
           <View key={i} style={{ flex: 1, alignItems: "center", marginHorizontal: 6 }}>
-            <View style={{ width: 14, height: barH, borderRadius: 6, backgroundColor: color }} />
-            <Text style={{ fontSize: 11, color: "#9aa0a0", marginTop: 8 }}>{["S", "M", "T", "W", "T", "F", "S"][i]}</Text>
+            <LinearGradient
+              colors={colors as any}
+              start={{ x: 0, y: 1 }}
+              end={{ x: 0, y: 0 }}
+              style={{ width: 14, height: barH, borderRadius: 6 }}
+            />
+            <Text style={{ fontSize: 11, color: labelColor, marginTop: 8 }}>{["S", "M", "T", "W", "T", "F", "S"][i]}</Text>
           </View>
         );
       })}
@@ -125,6 +141,7 @@ export default function Dashboard({ navigation }: Props) {
     steps: 820,
     battery: 85,
     spO2: 0,
+    respiratoryRate: 24,
     hr7: [70, 72, 71, 73, 69, 68, 68],
     steps7: [800, 1200, 600, 4200, 1500, 3200, 820],
     restMinutes: 480,
@@ -162,19 +179,23 @@ export default function Dashboard({ navigation }: Props) {
       if (typeof data.rssi === "number") setRssi(data.rssi);
       if (data.firmwareVersion) setFirmwareVersion(data.firmwareVersion);
 
-      setDogData((prev) => ({
-        ...prev,
-        heartRate: typeof data.heartRate === "number" ? data.heartRate : prev.heartRate,
-        steps: typeof data.steps === "number" ? data.steps : prev.steps,
-        battery: typeof data.battery === "number" ? data.battery : prev.battery,
-        spO2: typeof data.spO2 === "number" ? data.spO2 : prev.spO2,
-        hr7: Array.isArray(data.hrHistory) ? data.hrHistory : prev.hr7,
-        steps7: Array.isArray(data.stepsHistory) ? data.stepsHistory : prev.steps7,
-        restMinutes: typeof data.restTime === "number" ? data.restTime : prev.restMinutes,
-        napDuration: typeof data.napDuration === "number" ? data.napDuration : prev.napDuration,
-        activityLevel: data.activityLevel ?? prev.activityLevel,
-        harnessContact: typeof data.harnessContact === "boolean" ? data.harnessContact : prev.harnessContact,
-      }));
+      // Only update if this is dog profile data
+      if (data.profile === "dog" || !data.profile) {
+        setDogData((prev) => ({
+          ...prev,
+          heartRate: typeof data.heartRate === "number" ? data.heartRate : prev.heartRate,
+          steps: typeof data.steps === "number" ? data.steps : prev.steps,
+          battery: typeof data.battery === "number" ? data.battery : prev.battery,
+          spO2: typeof data.spO2 === "number" ? data.spO2 : prev.spO2,
+          respiratoryRate: typeof data.respiratoryRate === "number" ? data.respiratoryRate : prev.respiratoryRate,
+          hr7: Array.isArray(data.hrHistory) ? data.hrHistory : prev.hr7,
+          steps7: Array.isArray(data.stepsHistory) ? data.stepsHistory : prev.steps7,
+          restMinutes: typeof data.restTime === "number" ? data.restTime : prev.restMinutes,
+          napDuration: typeof data.napDuration === "number" ? data.napDuration : prev.napDuration,
+          activityLevel: data.activityLevel ?? prev.activityLevel,
+          harnessContact: typeof data.harnessContact === "boolean" ? data.harnessContact : prev.harnessContact,
+        }));
+      }
 
       console.log("BLE data event:", data);
     };
@@ -235,7 +256,10 @@ export default function Dashboard({ navigation }: Props) {
     setIsTraining(false);
     (bleManager as any).stopTrainingSession?.();
   };
-  const sendCue = (type: "vibrate" | "beep" | "tone" = "vibrate") => (bleManager as any).sendCue?.(type);
+  const sendCue = (type: "vibrate" | "beep" | "tone" = "vibrate") => {
+    const vibration = type === "vibrate" ? "gentle" : "pulse";
+    (bleManager as any).sendComfortSignal?.("dog", { vibration });
+  };
 
   // Active bucket for UI reads (dog only)
   const active = dogData;
@@ -275,8 +299,8 @@ export default function Dashboard({ navigation }: Props) {
               ]}
             >
               <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                <MaterialIcons name={dogConnected ? "link-off" : "link"} size={18} color="#fff" />
-                <Text style={{ color: "#fff", fontWeight: "800" }}>{dogConnected ? "Disconnect" : "Connect"}</Text>
+                <MaterialIcons name={dogConnected ? "link-off" : "link"} size={18} color={theme.textOnPrimary} />
+                <Text style={{ color: theme.textOnPrimary, fontWeight: "800" }}>{dogConnected ? "Disconnect" : "Connect"}</Text>
               </View>
             </AnimatedPressable>
 
@@ -292,7 +316,12 @@ export default function Dashboard({ navigation }: Props) {
         {/* ---------- TOP LIVE AREA: BPM (left) and Steps (right) ---------- */}
         <View style={styles.topRow}>
           {/* Heart Rate card (big) */}
-          <View style={[styles.largeCard, { backgroundColor: theme.card }]}>
+          <LinearGradient
+            colors={[theme.card, theme.cardElevated]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={[styles.largeCard, { borderColor: theme.border, borderWidth: 1 }]}
+          >
             <Text style={[styles.cardTitle, { color: theme.textMuted }]}>Dog Heart Rate</Text>
 
             <Animated.View style={[styles.heartWrap, { transform: [{ scale: heartPulse }], backgroundColor: theme.softPrimary }]}>
@@ -301,14 +330,19 @@ export default function Dashboard({ navigation }: Props) {
 
             <Text style={[styles.hrText, { color: theme.textDark }]}>{(active as any).heartRate ?? "--"} bpm</Text>
             <Text style={[styles.smallLabel, { color: theme.textMuted, marginTop: 8 }]}>Last measured just now</Text>
-          </View>
+          </LinearGradient>
 
           {/* Steps card (compact) */}
-          <View style={[styles.statCard, { backgroundColor: theme.card }]}>
+          <LinearGradient
+            colors={[theme.card, theme.cardElevated]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={[styles.statCard, { borderColor: theme.border, borderWidth: 1 }]}
+          >
             <Text style={[styles.cardTitle, { color: theme.textMuted }]}>Steps (today)</Text>
             <Text style={{ fontSize: 22, fontWeight: "800", color: theme.textDark, marginTop: 8 }}>{(active as any).steps ?? 0}</Text>
             <Text style={{ color: theme.textMuted, marginTop: 10, fontSize: 12 }}>Keep them active 🚶‍♀️</Text>
-          </View>
+          </LinearGradient>
         </View>
 
         {/* Battery / SpO2 / Connection area (stacked) */}
@@ -327,6 +361,13 @@ export default function Dashboard({ navigation }: Props) {
             <Text style={{ color: theme.textMuted, marginTop: 6 }}>Blood oxygen</Text>
           </View>
 
+          {/* Respiratory Rate */}
+          <View style={{ borderRadius: 12, padding: 14, backgroundColor: theme.card }}>
+            <Text style={{ color: theme.textMuted, fontWeight: "700" }}>Respiratory</Text>
+            <Text style={{ fontSize: 20, fontWeight: "800", color: theme.textDark, marginTop: 10 }}>{active.respiratoryRate ?? "--"} bpm</Text>
+            <Text style={{ color: theme.textMuted, marginTop: 6 }}>Breathing rate</Text>
+          </View>
+
           {/* Connection */}
           <View style={{ borderRadius: 12, padding: 14, backgroundColor: theme.card }}>
             <Text style={{ color: theme.textMuted, fontWeight: "700" }}>Connection</Text>
@@ -341,7 +382,10 @@ export default function Dashboard({ navigation }: Props) {
         {/* GRAPHS: bigger, labeled, show units & summary */}
         <View style={{ marginTop: 18, gap: 12 }}>
           {/* HR Graph */}
-          <View style={[styles.cardLargeGraph, { backgroundColor: theme.card }]}>
+          <LinearGradient
+            colors={[theme.card, theme.cardElevated]}
+            style={[styles.cardLargeGraph, { borderColor: theme.border, borderWidth: 1 }]}
+          >
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
               <Text style={{ fontWeight: "800", color: theme.textDark }}>7-day Heart Rate</Text>
               <View style={{ alignItems: "flex-end" }}>
@@ -350,11 +394,19 @@ export default function Dashboard({ navigation }: Props) {
               </View>
             </View>
 
-            <SevenDayBarChart data={(active as any).hr7 ?? [0, 0, 0, 0, 0, 0, 0]} color={theme.primary} height={110} />
-          </View>
+            <SevenDayBarChart
+              data={(active as any).hr7 ?? [0, 0, 0, 0, 0, 0, 0]}
+              colors={theme.gradientColors}
+              height={110}
+              labelColor={theme.textMuted}
+            />
+          </LinearGradient>
 
           {/* Steps Graph */}
-          <View style={[styles.cardLargeGraph, { backgroundColor: theme.card }]}>
+          <LinearGradient
+            colors={[theme.card, theme.cardElevated]}
+            style={[styles.cardLargeGraph, { borderColor: theme.border, borderWidth: 1 }]}
+          >
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
               <Text style={{ fontWeight: "800", color: theme.textDark }}>7-day Steps</Text>
               <View style={{ alignItems: "flex-end" }}>
@@ -365,8 +417,13 @@ export default function Dashboard({ navigation }: Props) {
               </View>
             </View>
 
-            <SevenDayBarChart data={(active as any).steps7 ?? [0, 0, 0, 0, 0, 0, 0]} color={theme.primary} height={110} />
-          </View>
+            <SevenDayBarChart
+              data={(active as any).steps7 ?? [0, 0, 0, 0, 0, 0, 0]}
+              colors={theme.gradientColors}
+              height={110}
+              labelColor={theme.textMuted}
+            />
+          </LinearGradient>
         </View>
 
         {/* Training controls + recent sessions */}
@@ -385,7 +442,7 @@ export default function Dashboard({ navigation }: Props) {
                 backgroundColor: isTraining ? theme.orange : theme.primary,
               }}
             >
-              <Text style={{ color: "#fff", fontWeight: "800" }}>{isTraining ? "Stop" : "Start"}</Text>
+              <Text style={{ color: theme.textOnPrimary, fontWeight: "800" }}>{isTraining ? "Stop" : "Start"}</Text>
             </TouchableOpacity>
 
             <TouchableOpacity

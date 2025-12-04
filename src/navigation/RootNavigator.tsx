@@ -30,14 +30,14 @@ function MainTabs() {
           height: 64,
           paddingBottom: 8,
           paddingTop: 8,
-          backgroundColor: theme.card ?? "#fff",
-          borderTopColor: theme.border ?? "#e5e7eb",
+          backgroundColor: theme.background,
+          borderTopColor: theme.border,
           borderTopWidth: 0.5,
           // on Android the elevation sometimes shows a shadow — keep it subtle per theme
           elevation: 0,
         },
-        tabBarActiveTintColor: theme.primary ?? "#00c6dcff",
-        tabBarInactiveTintColor: theme.textMuted ?? "#ffffffff",
+        tabBarActiveTintColor: theme.navActive,
+        tabBarInactiveTintColor: theme.navInactive,
         tabBarLabelStyle: { fontSize: 11, fontWeight: "600" },
       }}
     >
