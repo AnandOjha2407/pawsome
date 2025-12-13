@@ -1,5 +1,5 @@
 // src/ble/BLEManager.ts
-// Real BLE manager with Nordic UART Service support for GTS10/GTL1/ESP32
+// Real BLE manager with Runmefit SDK support for GTS10/GTL1 and ESP32 Vest
 
 import { BleManager, Device } from "react-native-ble-plx";
 import { Buffer } from "buffer";
@@ -18,7 +18,7 @@ import {
   PairedDeviceMap,
 } from "../storage/pairedDevices";
 
-type Role = "human" | "dog" | "vest";
+export type Role = "human" | "dog" | "vest";
 
 type Session = {
   id: string;
@@ -34,15 +34,78 @@ export type DeviceDescriptor = {
   rssi?: number | null;
 };
 
-// Nordic UART Service UUIDs (used by GTS10, GTL1)
-const UART_SERVICE = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
-const UART_TX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"; // Notify (RX from device perspective)
-const UART_RX = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"; // Write (TX from device perspective)
+// Replace the old Runmefit SDK Service UUIDs with Nordic UART Service
+// Based on Android SDK: 6e400001-b5a3-f393-e0a9-e50e24dcca9d
+const NORDIC_UART_SERVICE = "6e400001-b5a3-f393-e0a9-e50e24dcca9d";
+const NORDIC_UART_TX_CHAR = "6e400003-b5a3-f393-e0a9-e50e24dcca9d"; // Notify (data from device)
+const NORDIC_UART_RX_CHAR = "6e400002-b5a3-f393-e0a9-e50e24dcca9d"; // Write (commands to device)
+
+// Remove old RUNMEFIT_SERVICE, HR_CHARACTERISTIC, HRV_CHARACTERISTIC constants
 
 // ESP32 Vest custom service (comfort commands)
 const VEST_SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0";
 const VEST_COMMAND_CHAR_UUID = "12345678-1234-5678-1234-56789abcdef1";
 const VEST_STATUS_CHAR_UUID = "12345678-1234-5678-1234-56789abcdef2";
+
+// Device name patterns - more comprehensive matching
+const DEVICE_NAME_PATTERNS = {
+  human: [
+    /GTS\d*/i,           // GTS10, GTS1, etc.
+    /GTS\s*\d*/i,        // GTS 10, GTS 1 (with space)
+    /fitband/i,
+    /smartwatch/i,
+    /watch/i,
+  ],
+  dog: [
+    /GTL\d*/i,           // GTL1, GTL10, etc.
+    /GTL\s*\d*/i,        // GTL 1, GTL 10 (with space)
+    /collar/i,
+    /pet/i,
+    /tracker/i,
+  ],
+  vest: [
+    /bodhi'?s?\s*vest/i, // "Bodhi's vest", "Bodhi s vest" (check first - most specific)
+    /bodhi\s+.*vest/i,   // "Bodhi s vest", "Bodhi vest" (with any text between)
+    /bodhi/i,            // "Bodhi", "bodhi", "BODHI" (if it contains bodhi)
+    /vest/i,             // "vest", "Vest", "VEST"
+    /pawsome/i,
+    /esp32/i,
+    /harness/i,
+  ],
+};
+
+/**
+ * Auto-detect device type based on device name
+ * Returns the detected role or null if no pattern matches
+ */
+function detectDeviceType(deviceName: string | null | undefined): Role | null {
+  if (!deviceName) return null;
+
+  const name = deviceName.toLowerCase();
+
+  // Check vest patterns first (more specific)
+  for (const pattern of DEVICE_NAME_PATTERNS.vest) {
+    if (pattern.test(name)) {
+      return "vest";
+    }
+  }
+
+  // Check dog collar patterns
+  for (const pattern of DEVICE_NAME_PATTERNS.dog) {
+    if (pattern.test(name)) {
+      return "dog";
+    }
+  }
+
+  // Check human fitband patterns
+  for (const pattern of DEVICE_NAME_PATTERNS.human) {
+    if (pattern.test(name)) {
+      return "human";
+    }
+  }
+
+  return null;
+}
 
 class BLEManagerReal extends SimpleEmitter {
   private manager = new BleManager();
@@ -148,13 +211,14 @@ class BLEManagerReal extends SimpleEmitter {
 
   // ----------------------------------------------------------
   // SCANNING — Pairing.tsx calls startScan(callback)
+  // Filters to show only our 3 device types (GTS10, GTL1, Vest)
   // ----------------------------------------------------------
   async startScan(onDeviceFound: (dev: DeviceDescriptor) => void) {
     if (this.scanning) return;
 
     await this.requestPermissions();
     this.scanning = true;
-    this.log("Scan started");
+    this.log("Scan started - filtering for GTS10, GTL1, and Vest devices only");
 
     this.manager.startDeviceScan(null, { allowDuplicates: false }, (error, device) => {
       if (error) {
@@ -164,10 +228,28 @@ class BLEManagerReal extends SimpleEmitter {
       if (!device) return;
 
       const { id, name, rssi } = device;
+      
+      // Check if this device matches one of our 3 device types
+      const detectedType = detectDeviceType(name);
+      
+      if (!detectedType) {
+        // Not one of our devices - skip it
+        this.log(`Skipping unknown device: ${name ?? "Unknown"} (${id})`);
+        return;
+      }
+
+      // This is one of our devices - log and pass it to the callback
+      const deviceTypeLabels = {
+        human: "Human Fitband (GTS10)",
+        dog: "Dog Collar (GTL1)",
+        vest: "Therapy Vest (ESP32)",
+      };
+      
+      this.log(`Found ${deviceTypeLabels[detectedType]}: ${name ?? "Unknown"} (${id})`);
 
       onDeviceFound({
         id,
-        name,
+        name: name ?? null,
         mac: id,
         rssi,
       });
@@ -224,6 +306,13 @@ class BLEManagerReal extends SimpleEmitter {
   }
 
   // ----------------------------------------------------------
+  // AUTO-DETECT DEVICE TYPE FROM NAME
+  // ----------------------------------------------------------
+  detectDeviceType(deviceName: string | null | undefined): Role | null {
+    return detectDeviceType(deviceName);
+  }
+
+  // ----------------------------------------------------------
   // CONNECT (Used after assigning role)
   // ----------------------------------------------------------
   async connectToScannedDevice(
@@ -231,6 +320,7 @@ class BLEManagerReal extends SimpleEmitter {
     role: Role
   ): Promise<void> {
     this.stopScan();
+
     try {
       this.log(`Connecting to ${descriptor.name ?? "Unknown"} as ${role}`);
 
@@ -238,29 +328,83 @@ class BLEManagerReal extends SimpleEmitter {
         throw new Error("Invalid device ID");
       }
 
-      const device = await this.manager.connectToDevice(descriptor.id, {
-        requestMTU: 185,
-      });
+      let device;
+      try {
+        device = await this.manager.connectToDevice(descriptor.id, {
+          requestMTU: 185,
+        });
+      } catch (connectError: any) {
+        this.log(`Failed to connect to device: ${connectError?.message ?? connectError}`);
+        this.emit("error", connectError);
+        return;
+      }
 
-      await device.discoverAllServicesAndCharacteristics();
+      if (!device) {
+        this.log("Device connection returned null");
+        return;
+      }
+
+      // Discover services with error handling
+      try {
+        await device.discoverAllServicesAndCharacteristics();
+        
+        // Try to read device name if not available
+        if (!descriptor.name) {
+          try {
+            const deviceInfo = await device.readCharacteristicForService(
+              "00001800-0000-1000-8000-00805f9b34fb", // Generic Access Service
+              "00002a00-0000-1000-8000-00805f9b34fb"  // Device Name characteristic
+            );
+            if (deviceInfo?.value) {
+              const name = Buffer.from(deviceInfo.value, "base64").toString("utf8");
+              this.log(`Read device name: ${name}`);
+              descriptor.name = name;
+            }
+          } catch (nameError) {
+            this.log(`Could not read device name: ${nameError}`);
+          }
+        }
+      } catch (discoverError: any) {
+        this.log(`Failed to discover services: ${discoverError?.message ?? discoverError}`);
+        // Continue anyway - some devices work without full discovery
+      }
 
       this.devices[role] = device;
       this.roles[device.id] = role;
       this.rssi = device.rssi ?? -60;
 
+      // Subscribe to characteristics with error handling
       if (role === "human" || role === "dog") {
-        this.subscribeNordicUART(device, role);
-      } else {
-        this.subscribeVestComfort(device);
+        try {
+          this.subscribeNordicUARTDevice(device, role);
+        } catch (subError: any) {
+          this.log(`Warning: Failed to subscribe to Nordic UART for ${role}: ${subError?.message ?? subError}`);
+        }
+      } else if (role === "vest") {
+        try {
+          this.subscribeVestComfort(device);
+        } catch (subError: any) {
+          this.log(`Warning: Failed to subscribe to Vest service: ${subError?.message ?? subError}`);
+        }
       }
 
-      device.onDisconnected(() => {
-        this.connectedRoles[role] = false;
-        if (role === "vest") {
-          this.comfortStatus = "idle";
-        }
-        this.emitConnections();
-      });
+      // Set up disconnect handler with error handling
+      try {
+        device.onDisconnected((error) => {
+          try {
+            this.log(`Device disconnected: ${role} - ${error?.message ?? "No error"}`);
+            this.connectedRoles[role] = false;
+            if (role === "vest") {
+              this.comfortStatus = "idle";
+            }
+            this.emitConnections();
+          } catch (disconnectError: any) {
+            this.log(`Error in disconnect handler: ${disconnectError?.message ?? disconnectError}`);
+          }
+        });
+      } catch (listenerError: any) {
+        this.log(`Failed to set up disconnect listener: ${listenerError?.message ?? listenerError}`);
+      }
 
       this.connectedDevice = {
         name: descriptor.name ?? `${role.toUpperCase()} Device`,
@@ -268,18 +412,18 @@ class BLEManagerReal extends SimpleEmitter {
         rssi: descriptor.rssi ?? -60,
       };
 
-      if (role === "human" || role === "dog")
+      if (role === "human" || role === "dog") {
         this.assignedProfile = role;
+      }
 
       this.isConnected = true;
       this.connectedRoles[role] = true;
       this.emitConnections();
       this.emit("connected", this.connectedDevice);
 
-      this.log(`Connected to ${descriptor.id}`);
+      this.log(`Connected to ${descriptor.id} as ${role}`);
     } catch (e: any) {
       this.log("Connect error: " + String(e?.message ?? e));
-      // Alert.alert("BLE Error", "Failed to connect."); // Removed to prevent UI blocking
       this.emit("error", e);
     }
   }
@@ -310,77 +454,66 @@ class BLEManagerReal extends SimpleEmitter {
   // ----------------------------------------------------------
   // NORDIC UART SERVICE (GTS10/GTL1) MONITORING
   // ----------------------------------------------------------
-  private subscribeNordicUART(device: Device, role: "human" | "dog") {
-    this.log(`Subscribing Nordic UART notifications for ${role} (${device.id})`);
+  private subscribeNordicUARTDevice(device: Device, role: "human" | "dog") {
+    this.log(`Subscribing Nordic UART for ${role} (${device.id})`);
 
-    device.monitorCharacteristicForService(
-      UART_SERVICE,
-      UART_TX,
-      (error, char) => {
-        if (error) {
-          this.log(`Nordic UART error [${role}]: ${error.message}`);
-          return;
-        }
-        if (!char?.value) return;
-
-        const raw = Buffer.from(char.value, "base64");
-        const hex = raw.toString("hex");
-        this.log(`Nordic UART packet [${role}]: ${hex} (${raw.length} bytes)`);
-
-        // Parse protobuf RealTimeData
-        const parsed = parseDeviceData(raw);
-
-        if (parsed) {
-          this.log(`Parsed data [${role}]: HR=${parsed.heart_rate}, SpO2=${parsed.blood_oxygen}, HRV=${parsed.hrv}, Resp=${parsed.respiratory_rate}`);
-
-          // Update device-specific data
-          const targetData = role === "human" ? this.humanData : this.dogData;
-
-          if (parsed.heart_rate !== undefined) {
-            targetData.heartRate = parsed.heart_rate;
+    // Subscribe to TX characteristic (notifications from device)
+    try {
+      device.monitorCharacteristicForService(
+        NORDIC_UART_SERVICE,
+        NORDIC_UART_TX_CHAR,
+        (error, char) => {
+          if (error) {
+            this.log(`Nordic UART TX error [${role}]: ${error.message}`);
+            return;
           }
-          if (parsed.blood_oxygen !== undefined) {
-            targetData.spO2 = parsed.blood_oxygen;
-          }
-          if (parsed.hrv !== undefined) {
-            targetData.hrv.push(parsed.hrv);
-            if (targetData.hrv.length > 64) targetData.hrv.shift();
-          }
-          if (parsed.respiratory_rate !== undefined) {
-            targetData.respiratoryRate = parsed.respiratory_rate;
-          }
-          if (parsed.battery !== undefined) {
-            targetData.battery = parsed.battery;
-          }
-          targetData.lastUpdate = Date.now();
+          if (!char?.value) return;
 
-          // Emit data event with all sensor data
-          this.emitDeviceData(role);
+          try {
+            const raw = Buffer.from(char.value, "base64");
+            const hex = raw.toString("hex");
+            this.log(`Nordic UART packet [${role}]: ${hex} (${raw.length} bytes)`);
 
-        } else {
-          this.log(`Failed to parse packet [${role}], trying fallback extraction`);
-          // Fallback: try to extract basic values from raw bytes
-          if (raw.length >= 4) {
-            const hr = raw[0] >= 40 && raw[0] <= 220 ? raw[0] : undefined;
-            const spo2 = raw[1] >= 70 && raw[1] <= 100 ? raw[1] : undefined;
-            const hrv = raw[2] >= 10 && raw[2] <= 200 ? raw[2] : undefined;
-
-            if (hr) {
+            // Parse using ProtobufParser
+            const parsed = parseDeviceData(raw);
+            
+            if (parsed) {
               const targetData = role === "human" ? this.humanData : this.dogData;
-              targetData.heartRate = hr;
-              if (spo2) targetData.spO2 = spo2;
-              if (hrv) {
-                targetData.hrv.push(hrv);
+              
+              if (parsed.heart_rate) {
+                targetData.heartRate = parsed.heart_rate;
+              }
+              if (parsed.blood_oxygen) {
+                targetData.spO2 = parsed.blood_oxygen;
+              }
+              if (parsed.hrv) {
+                targetData.hrv.push(parsed.hrv);
                 if (targetData.hrv.length > 64) targetData.hrv.shift();
               }
+              if (parsed.respiratory_rate && role === "dog") {
+                targetData.respiratoryRate = parsed.respiratory_rate;
+              }
+              if (parsed.battery) {
+                targetData.battery = parsed.battery;
+              }
+              
               targetData.lastUpdate = Date.now();
               this.emitDeviceData(role);
+            } else {
+              this.log(`Failed to parse data from ${role} device`);
             }
+          } catch (parseError: any) {
+            this.log(`Parse error [${role}]: ${parseError?.message ?? parseError}`);
           }
         }
-      }
-    );
+      );
+    } catch (subError: any) {
+      this.log(`Failed to subscribe Nordic UART TX for ${role}: ${subError?.message ?? subError}`);
+    }
   }
+
+  // Remove old parseRunmefitHeartRate and parseRunmefitHRV methods
+  // They are replaced by ProtobufParser
 
   // Emit device data event with all sensor readings
   private emitDeviceData(role: "human" | "dog") {
@@ -417,25 +550,29 @@ class BLEManagerReal extends SimpleEmitter {
   // ----------------------------------------------------------
   private subscribeVestComfort(device: Device) {
     this.log(`Subscribing vest comfort service (${device.id})`);
-    device.monitorCharacteristicForService(
-      VEST_SERVICE_UUID,
-      VEST_STATUS_CHAR_UUID,
-      (error, char) => {
-        if (error) {
-          this.log("Vest status error: " + error.message);
-          return;
-        }
-        if (!char?.value) return;
+    try {
+      device.monitorCharacteristicForService(
+        VEST_SERVICE_UUID,
+        VEST_STATUS_CHAR_UUID,
+        (error, char) => {
+          if (error) {
+            this.log("Vest status error: " + error.message);
+            return;
+          }
+          if (!char?.value) return;
 
-        try {
-          const status = Buffer.from(char.value, "base64").toString("utf8");
-          this.comfortStatus = status.includes("active") ? "active" : "idle";
-          this.emit("comfort", { status: this.comfortStatus, payload: status });
-        } catch (e) {
-          this.log("Vest status parse error: " + String(e));
+          try {
+            const status = Buffer.from(char.value, "base64").toString("utf8");
+            this.comfortStatus = status.includes("active") ? "active" : "idle";
+            this.emit("comfort", { status: this.comfortStatus, payload: status });
+          } catch (e) {
+            this.log("Vest status parse error: " + String(e));
+          }
         }
-      }
-    );
+      );
+    } catch (subError: any) {
+      this.log(`Failed to subscribe to vest status: ${subError?.message ?? subError}. Service may not exist.`);
+    }
   }
 
   private async writeVestCommand(payload: string) {

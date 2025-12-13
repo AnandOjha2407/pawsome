@@ -31,10 +31,8 @@ export default {
       ],
 
       adaptiveIcon: {
-        backgroundColor: "#E6F4FE",
-        foregroundImage: "./assets/images/android-icon-foreground.png",
-        backgroundImage: "./assets/images/android-icon-background.png",
-        monochromeImage: "./assets/images/android-icon-monochrome.png"
+        backgroundColor: "#0F172A",
+        foregroundImage: "./assets/images/intro_logo.png"
       },
 
       edgeToEdgeEnabled: true,
@@ -62,12 +60,12 @@ export default {
       [
         "expo-splash-screen",
         {
-          image: "./assets/images/splash-icon.png",
-          imageWidth: 200,
+          image: "./assets/images/intro_logo.png",
+          imageWidth: 280,
           resizeMode: "contain",
-          backgroundColor: "#ffffff",
+          backgroundColor: "#0F172A",
           dark: {
-            backgroundColor: "#000000"
+            backgroundColor: "#0F172A"
           }
         }
       ],
@@ -81,13 +79,11 @@ export default {
 
     extra: {
       router: {},
-
+      API_BASE: "http://192.168.1.4:3000",
       // 🔥 ADD THIS — REQUIRED 🔥
       eas: {
-        projectId: "aee8757a-4d44-4101-9182-f74cb40c72e2"
-      },
-
-      API_BASE: "http://192.168.1.4:3000"
+        projectId: "832ba12e-1832-4541-af2a-4d0ae03c0dd4"
+      }
     }
   }
 };

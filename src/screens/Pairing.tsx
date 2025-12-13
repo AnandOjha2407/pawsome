@@ -49,7 +49,7 @@ export default function Pairing() {
     // For now assume Bluetooth is ON
     setBtOn(true);
 
-    const onData = () => {};
+    const onData = () => { };
     bleManager.on?.("data", onData);
 
     return () => {
@@ -58,23 +58,33 @@ export default function Pairing() {
   }, []);
 
   // --------------------------------------------------------------------------------------
-  // SCANNING
+  // SCANNING - Only shows GTS10, GTL1, and Vest devices
   // --------------------------------------------------------------------------------------
   const startScan = () => {
     setDevices([]);
     setIsScanning(true);
 
     bleManager.startScan((d) => {
+      // Double-check that this is one of our device types
+      // (BLEManager already filters, but this is an extra safety check)
+      const detectedType = bleManager.detectDeviceType(d.name);
+      
+      if (!detectedType) {
+        // Skip unknown devices
+        return;
+      }
+
       setDevices((prev) => {
+        // Don't add duplicates
         if (prev.some((x) => x.id === d.id)) return prev;
         return [...prev, d];
       });
     });
 
-    // Auto-stop after 8 sec
+    // Auto-stop after 10 sec (increased to give more time to find devices)
     setTimeout(() => {
       stopScan();
-    }, 8000);
+    }, 10000);
   };
 
   const stopScan = () => {
@@ -90,9 +100,38 @@ export default function Pairing() {
   }, [preferredTarget]);
 
   // --------------------------------------------------------------------------------------
-  // ROLE SELECTION POPUP (Option C)
+  // ROLE SELECTION - AUTO-DETECT WITH MANUAL FALLBACK
   // --------------------------------------------------------------------------------------
+
+  // Helper function to get device type icon and label
+  const getDeviceTypeInfo = (deviceName: string | null | undefined) => {
+    const detectedType = bleManager.detectDeviceType(deviceName);
+    switch (detectedType) {
+      case "human":
+        return { icon: "👤", label: "Human Fitband (GTS10)", type: detectedType };
+      case "dog":
+        return { icon: "🐕", label: "Dog Collar (GTL1)", type: detectedType };
+      case "vest":
+        return { icon: "🦺", label: "Therapy Vest (ESP32)", type: detectedType };
+      default:
+        return { icon: "❓", label: "Unknown Device", type: null };
+    }
+  };
+
   const pickRole = (dev: DeviceItem) => {
+    // Try to auto-detect device type from name
+    const detectedType = bleManager.detectDeviceType(dev.name);
+
+    if (detectedType) {
+      // Device type auto-detected - connect immediately without popup
+      finalConnect(dev, detectedType);
+    } else {
+      // Could not auto-detect - show manual picker as fallback
+      showManualPicker(dev);
+    }
+  };
+
+  const showManualPicker = (dev: DeviceItem) => {
     if (Platform.OS === "ios") {
       ActionSheetIOS.showActionSheetWithOptions(
         {
@@ -153,21 +192,34 @@ export default function Pairing() {
   // --------------------------------------------------------------------------------------
   // RENDER LIST ROW
   // --------------------------------------------------------------------------------------
-  const renderItem = ({ item }: { item: DeviceItem }) => (
-    <TouchableOpacity
-      style={styles.deviceRow}
-      onPress={() => pickRole(item)}
-    >
-      <View style={{ flex: 1 }}>
-        <Text style={styles.deviceName}>{item.name ?? "Unknown Device"}</Text>
-        <Text style={styles.deviceSub}>{item.mac ?? item.id}</Text>
-      </View>
+  const renderItem = ({ item }: { item: DeviceItem }) => {
+    const typeInfo = getDeviceTypeInfo(item.name);
 
-      <View style={styles.rssiWrap}>
-        <Text style={styles.rssiText}>{item.rssi ?? "-"}</Text>
-      </View>
-    </TouchableOpacity>
-  );
+    return (
+      <TouchableOpacity
+        style={styles.deviceRow}
+        onPress={() => pickRole(item)}
+      >
+        <View style={styles.deviceIcon}>
+          <Text style={{ fontSize: 24 }}>{typeInfo.icon}</Text>
+        </View>
+        <View style={{ flex: 1, marginLeft: 12 }}>
+          <Text style={styles.deviceName}>{item.name ?? "Unknown Device"}</Text>
+          <Text style={styles.deviceSub}>{item.mac ?? item.id}</Text>
+          <Text style={[
+            styles.deviceType,
+            { color: typeInfo.type ? activeTheme.success : activeTheme.textMuted }
+          ]}>
+            {typeInfo.label}
+          </Text>
+        </View>
+
+        <View style={styles.rssiWrap}>
+          <Text style={styles.rssiText}>{item.rssi ?? "-"}</Text>
+        </View>
+      </TouchableOpacity>
+    );
+  };
 
   // --------------------------------------------------------------------------------------
   // UI
@@ -176,12 +228,12 @@ export default function Pairing() {
     <View style={styles.screen}>
       <View style={styles.header}>
         <Text style={styles.title}>Find Your Device</Text>
-        <Text style={styles.subtitle}>Tap a device to select type</Text>
+        <Text style={styles.subtitle}>Scanning for GTS10, GTL1, and Vest devices only</Text>
         <View style={styles.headerActions}>
-          <TouchableOpacity onPress={() => router.push("/(tabs)/dashboard")}>
+          <TouchableOpacity onPress={() => router.push("/dashboard")}>
             <Text style={styles.link}>Open Dashboard</Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => router.push("/(tabs)/settings")}>
+          <TouchableOpacity onPress={() => router.push("/settings")}>
             <Text style={styles.link}>Go to Settings</Text>
           </TouchableOpacity>
         </View>
@@ -226,9 +278,12 @@ export default function Pairing() {
             renderItem={renderItem}
             ListEmptyComponent={
               <View style={styles.empty}>
-                <Text style={styles.emptyText}>No devices found</Text>
+                <Text style={styles.emptyText}>No compatible devices found</Text>
                 <Text style={styles.emptySub}>
-                  Start scan or move closer to the device.
+                  Looking for: GTS10, GTL1, or Vest devices
+                </Text>
+                <Text style={[styles.emptySub, { marginTop: 8, fontSize: 12 }]}>
+                  Make sure your devices are powered on and nearby.
                 </Text>
               </View>
             }
@@ -284,7 +339,16 @@ const createStyles = (theme: Theme) =>
     },
 
     deviceName: { fontWeight: "700", color: theme.textDark },
-    deviceSub: { color: theme.textMuted, marginTop: 4 },
+    deviceSub: { color: theme.textMuted, marginTop: 2, fontSize: 12 },
+    deviceType: { marginTop: 4, fontSize: 12, fontWeight: "600" },
+    deviceIcon: {
+      width: 44,
+      height: 44,
+      borderRadius: 22,
+      backgroundColor: theme.softPrimary,
+      alignItems: "center",
+      justifyContent: "center",
+    },
 
     rssiWrap: {
       marginLeft: 8,
