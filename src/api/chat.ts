@@ -1,59 +1,66 @@
 // src/api/chat.ts
-// Connects BondAI frontend to your backend. Reads API base from Expo extras first,
-// then falls back to local network IP for development.
+// DIRECT GEMINI INTEGRATION (Serverless)
+// This allows the app to work anywhere without a local backend server.
 
-import Constants from "expo-constants";
-import { Platform } from "react-native";
-
-// Get local IP for development (Android emulator uses 10.0.2.2, iOS simulator uses localhost)
-const getLocalBase = () => {
-  if (Platform.OS === "android") {
-    // For Android emulator, use 10.0.2.2 to access host machine
-    // For physical device, use your computer's local IP (e.g., 192.168.1.4)
-    return "http://192.168.1.4:3000";
-  } else {
-    // iOS simulator can use localhost
-    return "http://localhost:3000";
-  }
-};
-
-// Get base URL - prioritize local IP for development, ignore old tunnel URLs
-const getBaseUrl = () => {
-  const configUrl = Constants.expoConfig?.extra?.API_BASE;
-  
-  // If config has old tunnel URL or invalid URL, use local IP
-  if (configUrl && configUrl.includes("loca.lt")) {
-    console.log("⚠️ Ignoring old tunnel URL, using local IP");
-    return getLocalBase();
-  }
-  
-  // Use config URL if it's valid, otherwise fallback to local IP
-  return configUrl || getLocalBase();
-};
-
-const BASE = getBaseUrl();
+const GEMINI_API_KEY = "AIzaSyDRjL2a842N0MAqXFJc8cjeoRRF684tkIY";
+const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
 export async function sendChat(messages: { role: string; content: string }[]) {
   try {
-    const url = `${BASE}/api/chat`;
-    console.log("→ Sending chat to:", url);
+    console.log("→ Sending chat to Gemini (Direct)...");
 
-    const res = await fetch(url, {
+    // Safety check: ensure messages is an array
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return { reply: "No messages to send." };
+    }
+
+    // Convert messages to Gemini format
+    const contents = messages
+      .filter((msg) => msg && msg.role && msg.content) // Filter out invalid messages
+      .map((msg) => ({
+        role: msg.role === "assistant" ? "model" : "user",
+        parts: [{ text: String(msg.content || "") }],
+      }));
+
+    // Safety check: ensure we have valid contents
+    if (contents.length === 0) {
+      return { reply: "No valid messages to send." };
+    }
+
+    const res = await fetch(GEMINI_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages }),
+      body: JSON.stringify({
+        contents: contents,
+        generationConfig: {
+          temperature: 0.7,
+          maxOutputTokens: 1024,
+          topP: 0.8,
+          topK: 40,
+        },
+      }),
     });
 
     if (!res.ok) {
       const text = await res.text().catch(() => null);
-      throw new Error("Chat API error: " + (text || res.status));
+      throw new Error(`Gemini API error (${res.status}): ${text}`);
     }
 
-    const json = await res.json();
-    console.log("✅ Chat reply:", json);
-    return json; // { reply: "..." }
+    const data = await res.json();
+    console.log("✅ Gemini reply:", data);
+
+    const reply =
+      data?.candidates?.[0]?.content?.parts?.[0]?.text ||
+      data?.candidates?.[0]?.output ||
+      "No reply from AI";
+
+    return { reply };
   } catch (err) {
     console.error("❌ sendChat error:", err);
-    throw err;
+    // Fallback only if the internet is down completely
+    return {
+      reply: `I'm having trouble connecting (Error: ${err instanceof Error ? err.message : String(err)
+        }). Please check your connection.`,
+    };
   }
 }

@@ -7,47 +7,60 @@ import {
   ScrollView,
   Switch,
   TouchableOpacity,
-  TextInput,
   Alert,
   Platform,
+  TextInput,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useFocusEffect } from "@react-navigation/native";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { bleManager } from "../ble/BLEManager";
 import { useTheme } from "../ThemeProvider";
 import { Theme } from "../theme";
 import { SETTINGS_STORAGE_KEY } from "../storage/constants";
 import { loadPairedDevices, savePairedDevice } from "../storage/pairedDevices";
+import OnboardingTutorial from "../components/OnboardingTutorial";
+import { usePageOnboarding } from "../hooks/usePageOnboarding";
+import { TutorialStep } from "../components/OnboardingTutorial";
+import * as Updates from "expo-updates";
 
 /**
  * Settings screen with lightweight BLE integration.
  * Theme-aware: uses theme tokens from useTheme()
  */
 
-type Role = "human" | "dog";
 const STORAGE_KEY = SETTINGS_STORAGE_KEY;
 
 export default function Settings() {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
 
-  const [name, setName] = useState<string>("");
-  const [role, setRole] = useState<Role>("human");
+  // Onboarding
+  const { showOnboarding, completeOnboarding } = usePageOnboarding("settings");
 
-  // new: hold paired devices separately (dog = GTL1, human = GTS10, vest = DogGPT)
+  // Hold paired devices separately (dog = Polar H10, human = Polar H10, vest = PossumBond-Vest)
   const [pairedDevices, setPairedDevices] = useState<{
-    dog?: { id?: string; name?: string };
-    human?: { id?: string; name?: string };
-    vest?: { id?: string; name?: string };
+    dog?: { id?: string; name?: string | null };
+    human?: { id?: string; name?: string | null };
+    vest?: { id?: string; name?: string | null };
   }>({});
 
   const [autoConnect, setAutoConnect] = useState<boolean>(true);
-  const [keepBleAlive, setKeepBleAlive] = useState<boolean>(false);
-  const [notificationsEnabled, setNotificationsEnabled] = useState<boolean>(true);
-  const [hrAlertEnabled, setHrAlertEnabled] = useState<boolean>(false);
-  const [hrAlertThreshold, setHrAlertThreshold] = useState<string>("140");
-  const [autoSync, setAutoSync] = useState<boolean>(true);
+  const [stressAlertsEnabled, setStressAlertsEnabled] = useState<boolean>(true);
+  const [stressThreshold, setStressThreshold] = useState<string>("90");
   const [loading, setLoading] = useState<boolean>(true);
+
+  // Settings tutorial steps
+  const SETTINGS_TUTORIAL_STEPS: TutorialStep[] = [
+    {
+      id: "settings-intro",
+      title: "Customize Your Experience",
+      description:
+        "Manage your device connections, adjust preferences, and customize your Pawsome experience. Configure auto-connect, stress alerts, and device settings to match your needs.",
+      screen: "settings",
+    },
+  ];
+
 
   const router = useRouter();
   const [connectionSnapshot, setConnectionSnapshot] = useState<
@@ -62,15 +75,10 @@ export default function Settings() {
         const raw = await AsyncStorage.getItem(STORAGE_KEY);
         if (raw && mounted) {
           const parsed = JSON.parse(raw);
-          setName(parsed.name ?? "");
-          setRole(parsed.role ?? "human");
           setPairedDevices(parsed.pairedDevices ?? {});
           setAutoConnect(parsed.autoConnect ?? true);
-          setKeepBleAlive(parsed.keepBleAlive ?? false);
-          setNotificationsEnabled(parsed.notificationsEnabled ?? true);
-          setHrAlertEnabled(parsed.hrAlertEnabled ?? false);
-          setHrAlertThreshold(parsed.hrAlertThreshold ?? "140");
-          setAutoSync(parsed.autoSync ?? true);
+          setStressAlertsEnabled(parsed.stressAlertsEnabled ?? true);
+          setStressThreshold(parsed.stressThreshold ?? "90");
         }
       } catch (e) {
         console.warn("Settings: failed to load storage", e);
@@ -95,15 +103,32 @@ export default function Settings() {
   useFocusEffect(
     useCallback(() => {
       let active = true;
-      loadPairedDevices().then((map) => {
-        if (active && map) {
-          setPairedDevices(map);
+      
+      // Safety: Wrap in try-catch to prevent crashes
+      try {
+        loadPairedDevices().then((map) => {
+          if (active && map) {
+            setPairedDevices(map);
+          }
+        }).catch((e) => {
+          console.warn("[Settings] Failed to load paired devices:", e);
+        });
+
+        // Safety: Check if getConnections exists before calling
+        if (bleManager && typeof bleManager.getConnections === "function") {
+          try {
+            const snapshot = bleManager.getConnections();
+            if (snapshot && active) {
+              setConnectionSnapshot(snapshot);
+            }
+          } catch (e) {
+            console.warn("[Settings] Failed to get connections:", e);
+          }
         }
-      });
-      const snapshot = bleManager.getConnections?.();
-      if (snapshot && active) {
-        setConnectionSnapshot(snapshot);
+      } catch (e) {
+        console.warn("[Settings] Error in useFocusEffect:", e);
       }
+
       return () => {
         active = false;
       };
@@ -111,29 +136,43 @@ export default function Settings() {
   );
 
   useEffect(() => {
-    const handler = (snapshot: any) => setConnectionSnapshot(snapshot);
-    (bleManager as any).on?.("connections", handler);
+    // Safety: Check if event emitter methods exist
+    if (!bleManager || typeof (bleManager as any).on !== "function") {
+      return;
+    }
+
+    const handler = (snapshot: any) => {
+      try {
+        setConnectionSnapshot(snapshot);
+      } catch (e) {
+        console.warn("[Settings] Error in connections handler:", e);
+      }
+    };
+
+    try {
+      (bleManager as any).on("connections", handler);
+    } catch (e) {
+      console.warn("[Settings] Failed to register connections listener:", e);
+    }
+
     return () => {
       try {
-        (bleManager as any).off?.("connections", handler);
+        if (bleManager && typeof (bleManager as any).off === "function") {
+          (bleManager as any).off("connections", handler);
+        }
       } catch (e) {
-        /* noop */
+        console.warn("[Settings] Failed to unregister connections listener:", e);
       }
     };
   }, []);
 
-  // persist helper (stores pairedDevices now)
+  // persist helper (stores all settings)
   const persist = async () => {
     const payload = {
-      name,
-      role,
       pairedDevices,
       autoConnect,
-      keepBleAlive,
-      notificationsEnabled,
-      hrAlertEnabled,
-      hrAlertThreshold,
-      autoSync,
+      stressAlertsEnabled,
+      stressThreshold,
     };
     try {
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
@@ -155,20 +194,69 @@ export default function Settings() {
   };
 
   // Auto-connect effect — try connecting to any paired devices if autoConnect true
+  // FIXED: Added safety checks, delay, and prevents crashes
   useEffect(() => {
     let mounted = true;
+    let connectionTimeout: NodeJS.Timeout | null = null;
+
     (async () => {
       if (!mounted) return;
       if (!autoConnect) return;
 
+      // CRITICAL: Delay auto-connect to prevent crash on Settings screen mount
+      // Wait for screen to fully mount and BLE manager to be ready
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+
+      if (!mounted) return;
+
       try {
+        // Safety check: Verify BLE manager exists
+        if (!bleManager || !(bleManager as any).manager) {
+          console.warn("[Settings] BLE manager not ready, skipping auto-connect");
+          return;
+        }
+
+        // Safety check: Check if already connected to avoid duplicate connections
+        const currentConnections = bleManager.getConnections?.();
+        if (currentConnections?.connected?.dog && pairedDevices.dog?.id) {
+          console.log("[Settings] Dog device already connected, skipping");
+        }
+        if (currentConnections?.connected?.human && pairedDevices.human?.id) {
+          console.log("[Settings] Human device already connected, skipping");
+        }
+        if (currentConnections?.connected?.vest && pairedDevices.vest?.id) {
+          console.log("[Settings] Vest device already connected, skipping");
+        }
+
         (bleManager as any).on?.("connected", onConnected);
         (bleManager as any).on?.("disconnected", onDisconnected);
 
-        // Attempt connects for paired devices (best-effort)
-        const tryConnect = async (id: string | undefined, name: string | undefined, type: "dog" | "human" | "vest") => {
-          if (!id) return;
+        // Attempt connects for paired devices (best-effort with safety checks)
+        const tryConnect = async (id: string | undefined, name: string | null | undefined, type: "dog" | "human" | "vest") => {
+          if (!id || !mounted) return;
+          
+          // Safety: Check if bleManager methods exist
+          if (!bleManager || typeof bleManager.getConnections !== "function" || 
+              typeof bleManager.assignDeviceType !== "function" || 
+              typeof bleManager.connectToScannedDevice !== "function") {
+            console.warn(`[Settings] BLE manager methods not available for ${type}`);
+            return;
+          }
+
           try {
+            // Check if already connected
+            const connections = bleManager.getConnections();
+            if (connections?.connected?.[type]) {
+              console.log(`[Settings] ${type} device already connected, skipping`);
+              return;
+            }
+
+            // Safety: Verify device ID is valid
+            if (!id || id.length === 0) {
+              console.warn(`[Settings] Invalid device ID for ${type}`);
+              return;
+            }
+
             bleManager.assignDeviceType(
               {
                 id,
@@ -178,6 +266,12 @@ export default function Settings() {
               },
               type
             );
+
+            // Add small delay between connections to prevent overwhelming BLE stack
+            await new Promise((resolve) => setTimeout(resolve, 500));
+
+            if (!mounted) return;
+
             await bleManager.connectToScannedDevice(
               {
                 id,
@@ -187,24 +281,44 @@ export default function Settings() {
               },
               type
             );
-            console.log(`Auto-connected ${type} device`);
-          } catch (e) {
-            console.warn(`Auto-connect ${type} device failed`, e);
+            console.log(`[Settings] Auto-connected ${type} device`);
+          } catch (e: any) {
+            // Log but don't crash - connection failures are expected
+            console.warn(`[Settings] Auto-connect ${type} device failed:`, e?.message || e);
           }
         };
 
         // Dog is primary — attempt first
-        await tryConnect(pairedDevices.dog?.id, pairedDevices.dog?.name, "dog");
+        if (mounted && pairedDevices.dog?.id) {
+          await tryConnect(pairedDevices.dog.id, pairedDevices.dog.name, "dog");
+        }
+        
+        // Add delay between device connections
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        if (!mounted) return;
+
         // then human & vest (optional)
-        await tryConnect(pairedDevices.human?.id, pairedDevices.human?.name, "human");
-        await tryConnect(pairedDevices.vest?.id, pairedDevices.vest?.name, "vest");
-      } catch (e) {
-        console.warn("Auto-connect failed", e);
+        if (mounted && pairedDevices.human?.id) {
+          await tryConnect(pairedDevices.human.id, pairedDevices.human.name, "human");
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        if (!mounted) return;
+
+        if (mounted && pairedDevices.vest?.id) {
+          await tryConnect(pairedDevices.vest.id, pairedDevices.vest.name, "vest");
+        }
+      } catch (e: any) {
+        // Critical: Never let auto-connect crash the Settings screen
+        console.warn("[Settings] Auto-connect error (non-fatal):", e?.message || e);
       }
     })();
 
     return () => {
       mounted = false;
+      if (connectionTimeout) {
+        clearTimeout(connectionTimeout);
+      }
       try {
         (bleManager as any).off?.("connected", onConnected);
         (bleManager as any).off?.("disconnected", onDisconnected);
@@ -215,27 +329,6 @@ export default function Settings() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoConnect, pairedDevices]);
 
-  // Manual sync
-  const handleManualSync = async () => {
-    Alert.alert("Sync", "Attempting to sync with paired device (stub)...");
-    console.log("[Settings] manualSync invoked");
-    try {
-      if ((bleManager as any)?.requestData) {
-        await (bleManager as any).requestData();
-      } else if ((bleManager as any)?.sync) {
-        await (bleManager as any).sync();
-      } else if ((bleManager as any)?.readBatteryAndHR) {
-        await (bleManager as any).readBatteryAndHR();
-      } else {
-        console.warn("bleManager.sync / requestData not implemented");
-        Alert.alert("Sync", "BLE manager does not implement a sync method (stub).");
-      }
-      setTimeout(() => Alert.alert("Sync", "Sync complete (stub)."), 700);
-    } catch (e) {
-      console.warn("manualSync failed", e);
-      Alert.alert("Sync", "Sync failed (see console for details).");
-    }
-  };
 
   const openPairingManager = (type: "dog" | "human" | "vest") => {
     try {
@@ -245,13 +338,6 @@ export default function Settings() {
     }
   };
 
-  const openDashboard = () => {
-    try {
-      router.push("/(tabs)/dashboard");
-    } catch (e) {
-      console.warn("navigation to dashboard failed", e);
-    }
-  };
 
   // Unassign a specific device type
   const handleUnassign = async (type: "dog" | "human" | "vest") => {
@@ -279,14 +365,8 @@ export default function Settings() {
     }
   };
 
-  // Export / Reset
-  const handleExportData = async () => {
-    Alert.alert("Export", "Exporting data (stub).");
-    console.log("[Settings] export requested");
-  };
-
   const handleResetAssignments = async () => {
-    Alert.alert("Reset", "Reset all assignments and settings?", [
+    Alert.alert("Reset", "Reset all device pairings and settings?", [
       { text: "Cancel", style: "cancel" },
       {
         text: "Reset",
@@ -297,86 +377,115 @@ export default function Settings() {
           } catch (e) {
             /* noop */
           }
-          setName("");
-          setRole("human");
           setPairedDevices({});
           setAutoConnect(true);
-          setKeepBleAlive(false);
-          setUnitsMetric(true);
-          setNotificationsEnabled(true);
-          setHrAlertEnabled(false);
-          setHrAlertThreshold("140");
-          setAutoSync(true);
-          setShareData(false);
-          setThemeDog(true);
+          setStressAlertsEnabled(true);
+          setStressThreshold("90");
           Alert.alert("Reset", "Settings have been reset.");
         },
       },
     ]);
   };
 
-  const handleOpenSdkDocs = () => {
-    const url = "https://example.com/runmefit-sdk-docs"; // placeholder
-    Linking.openURL(url).catch(() => {
-      Alert.alert("Open", "Unable to open SDK docs — implement URL.");
-    });
-  };
-
-  // small helper
+  // Helper to validate numeric input
   const numericOnly = (text: string) => text.replace(/[^0-9]/g, "");
+
+  // Manual update check
+  const checkForUpdates = async () => {
+    try {
+      // Check if updates are enabled
+      if (!Updates.isEnabled) {
+        Alert.alert(
+          "Updates Not Available",
+          "Updates are only available in production/preview builds. Development builds don't support OTA updates.\n\nTo get updates:\n1. Build with: eas build --profile preview\n2. Install that build on your device\n3. Then updates will work automatically."
+        );
+        return;
+      }
+
+      // Check if we're in development mode
+      if (__DEV__) {
+        Alert.alert(
+          "Development Mode",
+          "You're running in development mode. Updates only work in production/preview builds.\n\nTo test updates:\n1. Build with: eas build --profile preview\n2. Install that build\n3. Updates will work automatically on app launch."
+        );
+        return;
+      }
+
+      Alert.alert("Checking for updates...", "Please wait...");
+      
+      const update = await Updates.checkForUpdateAsync();
+      
+      if (update.isAvailable) {
+        Alert.alert(
+          "Update Available",
+          "A new update is available. Would you like to download it now?",
+          [
+            { text: "Later", style: "cancel" },
+            {
+              text: "Download",
+              onPress: async () => {
+                try {
+                  await Updates.fetchUpdateAsync();
+                  Alert.alert(
+                    "Update Downloaded",
+                    "The update has been downloaded. Restart the app to apply it.",
+                    [
+                      {
+                        text: "Restart Now",
+                        onPress: async () => {
+                          await Updates.reloadAsync();
+                        },
+                      },
+                      { text: "Later", style: "cancel" },
+                    ]
+                  );
+                } catch (error: any) {
+                  Alert.alert("Error", `Failed to download update: ${error?.message || "Unknown error"}`);
+                }
+              },
+            },
+          ]
+        );
+      } else {
+        Alert.alert("No Updates", "You're already on the latest version!");
+      }
+    } catch (error: any) {
+      const errorMessage = error?.message || error?.toString() || "Unknown error";
+      
+      // Provide helpful error messages
+      if (errorMessage.includes("rejected") || errorMessage.includes("not available")) {
+        Alert.alert(
+          "Updates Not Available",
+          "Updates are only available in production/preview builds installed from EAS Build.\n\nIf you're using a development build or Expo Go, updates won't work.\n\nTo enable updates:\n1. Run: eas build --profile preview\n2. Install the generated APK/IPA\n3. Updates will work automatically on app launch."
+        );
+      } else {
+        Alert.alert("Error", `Failed to check for updates: ${errorMessage}`);
+      }
+    }
+  };
 
   // ---------- RENDER ----------
   return (
-    <ScrollView contentContainerStyle={[ui.container, { backgroundColor: theme.background }]} keyboardShouldPersistTaps="handled">
+    <ScrollView 
+      contentContainerStyle={[
+        ui.container, 
+        { 
+          backgroundColor: theme.background,
+          paddingTop: Math.max(insets.top, 20),
+          paddingBottom: Math.max(insets.bottom, 20),
+        }
+      ]} 
+      keyboardShouldPersistTaps="handled"
+    >
       <Text style={[ui.heading, { color: theme.textDark }]}>Settings</Text>
-      <Text style={[ui.description, { color: theme.textMuted }]}>Configure your profile and device preferences</Text>
+      <Text style={[ui.description, { color: theme.textMuted }]}>Manage your devices and preferences</Text>
 
-      {/* Profile */}
-      <View style={ui.section}>
-        <Text style={[ui.sectionTitle, { color: theme.textDark }]}>Profile</Text>
-        <Text style={[ui.label, { color: theme.textMuted }]}>Display name</Text>
-        <TextInput
-          style={[ui.textInput, { backgroundColor: theme.card, borderColor: theme.border, color: theme.textDark }]}
-          placeholder="Your name"
-          placeholderTextColor={theme.textMuted}
-          value={name}
-          onChangeText={setName}
-          returnKeyType="done"
-        />
-        <Text style={[ui.label, { marginTop: 12, color: theme.textMuted }]}>Role</Text>
-        <View style={ui.row}>
-          <TouchableOpacity
-            style={[ui.roleBtn, role === "human" && { backgroundColor: theme.primary, borderColor: "transparent" }]}
-            onPress={() => {
-              setRole("human");
-              persist();
-            }}
-          >
-            <Text style={role === "human" ? ui.roleTextActive : [ui.roleText, { color: theme.textDark }]}>Me (Human)</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[
-              ui.roleBtn,
-              role === "dog" && { backgroundColor: theme.primary, borderColor: "transparent", marginLeft: 8 },
-              { marginLeft: role === "dog" ? 8 : 8 },
-            ]}
-            onPress={() => {
-              setRole("dog");
-              persist();
-            }}
-          >
-            <Text style={role === "dog" ? ui.roleTextActive : [ui.roleText, { color: theme.textDark }]}>My Dog</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {/* Devices (new multi-device UI) */}
+      {/* Devices */}
       <View style={ui.section}>
         <Text style={[ui.sectionTitle, { color: theme.textDark }]}>Devices</Text>
 
         {/* DOG (primary) */}
-        <Text style={[ui.label, { color: theme.textMuted, marginTop: 6 }]}>Dog device (GTL1)</Text>
+        <Text style={[ui.label, { color: theme.textMuted, marginTop: 6 }]}>Dog device (Polar H10)</Text>
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
           <View>
             <Text style={[ui.valueText, { color: theme.textDark }]}>{pairedDevices.dog ? pairedDevices.dog.name : "Not paired"}</Text>
@@ -397,11 +506,17 @@ export default function Settings() {
                 style={[ui.secondaryBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
                 onPress={async () => {
                   try {
+                    // Safety: Check if bleManager methods exist
+                    if (!bleManager || typeof bleManager.assignDeviceType !== "function" || typeof bleManager.connectToScannedDevice !== "function") {
+                      Alert.alert("Error", "Bluetooth manager not available");
+                      return;
+                    }
+
                     if (pairedDevices.dog?.id) {
                       bleManager.assignDeviceType(
                         {
                           id: pairedDevices.dog.id,
-                          name: pairedDevices.dog.name,
+                          name: pairedDevices.dog.name || "Dog Device",
                           mac: pairedDevices.dog.id,
                           rssi: -60,
                         },
@@ -410,7 +525,7 @@ export default function Settings() {
                       await bleManager.connectToScannedDevice(
                         {
                           id: pairedDevices.dog.id,
-                          name: pairedDevices.dog.name,
+                          name: pairedDevices.dog.name || "Dog Device",
                           mac: pairedDevices.dog.id,
                           rssi: -60,
                         },
@@ -420,22 +535,15 @@ export default function Settings() {
                     } else {
                       Alert.alert("Error", "No dog device paired.");
                     }
-                  } catch (e) {
+                  } catch (e: any) {
                     console.warn("connect dog failed", e);
-                    Alert.alert("Error", `Failed to connect: ${String(e)}`);
+                    Alert.alert("Error", `Failed to connect: ${e?.message || String(e)}`);
                   }
                 }}
               >
                 <Text style={[ui.secondaryBtnText, { color: theme.textDark }]}>{connectionSnapshot?.connected?.dog ? "Reconnect" : "Connect"}</Text>
               </TouchableOpacity>
             ) : null}
-
-            <TouchableOpacity
-              style={[ui.secondaryBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
-              onPress={openDashboard}
-            >
-              <Text style={[ui.secondaryBtnText, { color: theme.textDark }]}>Dashboard</Text>
-            </TouchableOpacity>
 
             {pairedDevices.dog ? (
               <TouchableOpacity
@@ -449,7 +557,7 @@ export default function Settings() {
         </View>
 
         {/* HUMAN */}
-        <Text style={[ui.label, { color: theme.textMuted, marginTop: 12 }]}>Human device (GTS10)</Text>
+        <Text style={[ui.label, { color: theme.textMuted, marginTop: 12 }]}>Human device (Polar H10)</Text>
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
           <View>
             <Text style={[ui.valueText, { color: theme.textDark }]}>{pairedDevices.human ? pairedDevices.human.name : "Not paired"}</Text>
@@ -470,11 +578,17 @@ export default function Settings() {
                 style={[ui.secondaryBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
                 onPress={async () => {
                   try {
+                    // Safety: Check if bleManager methods exist
+                    if (!bleManager || typeof bleManager.assignDeviceType !== "function" || typeof bleManager.connectToScannedDevice !== "function") {
+                      Alert.alert("Error", "Bluetooth manager not available");
+                      return;
+                    }
+
                     if (pairedDevices.human?.id) {
                       bleManager.assignDeviceType(
                         {
                           id: pairedDevices.human.id,
-                          name: pairedDevices.human.name,
+                          name: pairedDevices.human.name || "Human Device",
                           mac: pairedDevices.human.id,
                           rssi: -60,
                         },
@@ -483,7 +597,7 @@ export default function Settings() {
                       await bleManager.connectToScannedDevice(
                         {
                           id: pairedDevices.human.id,
-                          name: pairedDevices.human.name,
+                          name: pairedDevices.human.name || "Human Device",
                           mac: pairedDevices.human.id,
                           rssi: -60,
                         },
@@ -493,22 +607,15 @@ export default function Settings() {
                     } else {
                       Alert.alert("Error", "No human device paired.");
                     }
-                  } catch (e) {
+                  } catch (e: any) {
                     console.warn("connect human failed", e);
-                    Alert.alert("Error", `Failed to connect: ${String(e)}`);
+                    Alert.alert("Error", `Failed to connect: ${e?.message || String(e)}`);
                   }
                 }}
               >
                 <Text style={[ui.secondaryBtnText, { color: theme.textDark }]}>{connectionSnapshot?.connected?.human ? "Reconnect" : "Connect"}</Text>
               </TouchableOpacity>
             ) : null}
-
-            <TouchableOpacity
-              style={[ui.secondaryBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
-              onPress={openDashboard}
-            >
-              <Text style={[ui.secondaryBtnText, { color: theme.textDark }]}>Dashboard</Text>
-            </TouchableOpacity>
 
             {pairedDevices.human ? (
               <TouchableOpacity
@@ -543,11 +650,17 @@ export default function Settings() {
                 style={[ui.secondaryBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
                 onPress={async () => {
                   try {
+                    // Safety: Check if bleManager methods exist
+                    if (!bleManager || typeof bleManager.assignDeviceType !== "function" || typeof bleManager.connectToScannedDevice !== "function") {
+                      Alert.alert("Error", "Bluetooth manager not available");
+                      return;
+                    }
+
                     if (pairedDevices.vest?.id) {
                       bleManager.assignDeviceType(
                         {
                           id: pairedDevices.vest.id,
-                          name: pairedDevices.vest.name,
+                          name: pairedDevices.vest.name || "Vest Device",
                           mac: pairedDevices.vest.id,
                           rssi: -60,
                         },
@@ -556,7 +669,7 @@ export default function Settings() {
                       await bleManager.connectToScannedDevice(
                         {
                           id: pairedDevices.vest.id,
-                          name: pairedDevices.vest.name,
+                          name: pairedDevices.vest.name || "Vest Device",
                           mac: pairedDevices.vest.id,
                           rssi: -60,
                         },
@@ -566,22 +679,15 @@ export default function Settings() {
                     } else {
                       Alert.alert("Error", "No vest device paired.");
                     }
-                  } catch (e) {
+                  } catch (e: any) {
                     console.warn("connect vest failed", e);
-                    Alert.alert("Error", `Failed to connect: ${String(e)}`);
+                    Alert.alert("Error", `Failed to connect: ${e?.message || String(e)}`);
                   }
                 }}
               >
                 <Text style={[ui.secondaryBtnText, { color: theme.textDark }]}>{connectionSnapshot?.connected?.vest ? "Reconnect" : "Connect"}</Text>
               </TouchableOpacity>
             ) : null}
-
-            <TouchableOpacity
-              style={[ui.secondaryBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
-              onPress={openDashboard}
-            >
-              <Text style={[ui.secondaryBtnText, { color: theme.textDark }]}>Dashboard</Text>
-            </TouchableOpacity>
 
             {pairedDevices.vest ? (
               <TouchableOpacity
@@ -594,15 +700,18 @@ export default function Settings() {
           </View>
         </View>
 
-        <Text style={[ui.hint, { color: theme.textMuted, marginTop: 10 }]}>Tip: Dog device acts as the main tracker. Human and Vest are optional — pair them if you want extended data or control.</Text>
+        <Text style={[ui.hint, { color: theme.textMuted, marginTop: 10 }]}>Tip: Dog device acts as the main tracker. Human and Vest are optional.</Text>
       </View>
 
-      {/* Bluetooth & Connection */}
+      {/* Connection Settings */}
       <View style={ui.section}>
-        <Text style={[ui.sectionTitle, { color: theme.textDark }]}>Bluetooth & Connection</Text>
+        <Text style={[ui.sectionTitle, { color: theme.textDark }]}>Connection</Text>
 
         <View style={ui.settingRow}>
-          <Text style={[ui.settingLabel, { color: theme.textDark }]}>Auto-connect on start</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={[ui.settingLabel, { color: theme.textDark }]}>Auto-connect on start</Text>
+            <Text style={[ui.hint, { color: theme.textMuted, marginTop: 4 }]}>Automatically connect to paired devices when app opens</Text>
+          </View>
           <Switch
             value={autoConnect}
             onValueChange={(v) => {
@@ -613,129 +722,72 @@ export default function Settings() {
             thumbColor={Platform.OS === "android" ? (autoConnect ? theme.primary : undefined) : undefined}
           />
         </View>
-
-        <View style={ui.settingRow}>
-          <Text style={[ui.settingLabel, { color: theme.textDark }]}>Keep BLE alive in background</Text>
-          <Switch
-            value={keepBleAlive}
-            onValueChange={(v) => {
-              setKeepBleAlive(v);
-              persist();
-            }}
-            trackColor={{ true: theme.primary, false: undefined }}
-            thumbColor={Platform.OS === "android" ? (keepBleAlive ? theme.primary : undefined) : undefined}
-          />
-        </View>
-
-        <Text style={[ui.hint, { color: theme.textMuted }]}>On iOS enable Background Modes → Bluetooth to keep connections alive in background.</Text>
       </View>
 
-
-      {/* Notifications & Alerts */}
+      {/* Alerts & Notifications */}
       <View style={ui.section}>
-        <Text style={[ui.sectionTitle, { color: theme.textDark }]}>Notifications & Alerts</Text>
+        <Text style={[ui.sectionTitle, { color: theme.textDark }]}>Alerts & Notifications</Text>
 
         <View style={ui.settingRow}>
-          <Text style={[ui.settingLabel, { color: theme.textDark }]}>Enable notifications</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={[ui.settingLabel, { color: theme.textDark }]}>Stress alerts</Text>
+            <Text style={[ui.hint, { color: theme.textMuted, marginTop: 4 }]}>Get notified when dog's heart rate indicates stress</Text>
+          </View>
           <Switch
-            value={notificationsEnabled}
+            value={stressAlertsEnabled}
             onValueChange={(v) => {
-              setNotificationsEnabled(v);
+              setStressAlertsEnabled(v);
               persist();
             }}
             trackColor={{ true: theme.primary, false: undefined }}
-            thumbColor={Platform.OS === "android" ? (notificationsEnabled ? theme.primary : undefined) : undefined}
+            thumbColor={Platform.OS === "android" ? (stressAlertsEnabled ? theme.primary : undefined) : undefined}
           />
         </View>
 
-        <View style={[ui.settingRow, { alignItems: "center" }]}>
-          <Text style={[ui.settingLabel, { color: theme.textDark }]}>High heart-rate alert</Text>
-          <Switch
-            value={hrAlertEnabled}
-            onValueChange={(v) => {
-              setHrAlertEnabled(v);
-              persist();
-            }}
-            trackColor={{ true: theme.primary, false: undefined }}
-            thumbColor={Platform.OS === "android" ? (hrAlertEnabled ? theme.primary : undefined) : undefined}
-          />
-        </View>
-
-        {hrAlertEnabled && (
-          <View style={{ marginTop: 10 }}>
-            <Text style={[ui.label, { color: theme.textMuted }]}>Threshold (bpm)</Text>
+        {stressAlertsEnabled && (
+          <View style={{ marginTop: 12 }}>
+            <Text style={[ui.label, { color: theme.textMuted }]}>Stress threshold (BPM)</Text>
             <TextInput
               keyboardType="numeric"
-              style={[ui.textInput, { backgroundColor: theme.card, borderColor: theme.border, color: theme.textDark }]}
-              value={hrAlertThreshold}
-              onChangeText={(t) => setHrAlertThreshold(numericOnly(t))}
+              style={[ui.textInput, { backgroundColor: theme.card, borderColor: theme.border, color: theme.textDark, marginTop: 6 }]}
+              value={stressThreshold}
+              onChangeText={(t) => setStressThreshold(numericOnly(t))}
               onEndEditing={() => persist()}
-              placeholder="140"
+              placeholder="90"
               placeholderTextColor={theme.textMuted}
             />
-            <Text style={[ui.hint, { color: theme.textMuted }]}>Notifications will be delivered when measured HR &gt; threshold.</Text>
+            <Text style={[ui.hint, { color: theme.textMuted, marginTop: 4 }]}>Alert when dog's heart rate exceeds this value</Text>
           </View>
         )}
       </View>
 
-      {/* Sync */}
+      {/* App Updates */}
       <View style={ui.section}>
-        <Text style={[ui.sectionTitle, { color: theme.textDark }]}>Sync</Text>
-
-        <View style={ui.settingRow}>
-          <Text style={[ui.settingLabel, { color: theme.textDark }]}>Auto-sync</Text>
-          <Switch
-            value={autoSync}
-            onValueChange={(v) => {
-              setAutoSync(v);
-              persist();
-            }}
-            trackColor={{ true: theme.primary, false: undefined }}
-            thumbColor={Platform.OS === "android" ? (autoSync ? theme.primary : undefined) : undefined}
-          />
-        </View>
-
-        <View style={{ flexDirection: "row", marginTop: 12 }}>
-          <TouchableOpacity style={[ui.primaryBtn, { backgroundColor: theme.primary }]} onPress={handleManualSync}>
-            <Text style={ui.primaryBtnText}>Sync Now</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity style={[ui.secondaryBtn, { marginLeft: 10, backgroundColor: theme.card, borderColor: theme.border }]} onPress={handleExportData}>
-            <Text style={[ui.secondaryBtnText, { color: theme.textDark }]}>Export Data</Text>
-          </TouchableOpacity>
-        </View>
+        <Text style={[ui.sectionTitle, { color: theme.textDark }]}>App Updates</Text>
+        <TouchableOpacity 
+          style={[ui.primaryBtn, { backgroundColor: theme.primary, marginTop: 8 }]} 
+          onPress={checkForUpdates}
+        >
+          <Text style={[ui.primaryBtnText, { color: theme.textOnPrimary }]}>Check for Updates</Text>
+        </TouchableOpacity>
+        <Text style={[ui.hint, { color: theme.textMuted, marginTop: 8 }]}>
+          The app automatically checks for updates on launch. Tap here to check manually.
+        </Text>
       </View>
-
 
       {/* Actions */}
       <View style={ui.section}>
         <TouchableOpacity style={[ui.ghostBtn, { borderColor: theme.border, backgroundColor: theme.card }]} onPress={handleResetAssignments}>
-          <Text style={[ui.ghostBtnText, { color: theme.orange }]}>Reset assignments & settings</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[
-            ui.primaryBtn,
-            {
-              marginTop: 12,
-              backgroundColor: theme.primary,
-              borderRadius: theme.buttonRadius,
-              shadowColor: theme.primary,
-              shadowOpacity: 0.35,
-              shadowRadius: 12,
-              shadowOffset: { width: 0, height: 4 },
-            },
-          ]}
-          onPress={() => {
-            persist();
-            Alert.alert("Saved", "All preferences saved.");
-          }}
-        >
-          <Text style={[ui.primaryBtnText, { color: theme.textOnPrimary }]}>Save</Text>
+          <Text style={[ui.ghostBtnText, { color: theme.orange }]}>Reset all settings</Text>
         </TouchableOpacity>
       </View>
 
-      <View style={{ height: 80 }} />
+      {/* Onboarding Tutorial */}
+      <OnboardingTutorial
+        steps={SETTINGS_TUTORIAL_STEPS}
+        visible={showOnboarding}
+        onComplete={completeOnboarding}
+      />
     </ScrollView>
   );
 }
@@ -759,28 +811,6 @@ const ui = StyleSheet.create({
   },
   sectionTitle: { fontWeight: "700", marginBottom: 8 },
 
-  label: { fontSize: 13, marginBottom: 6 },
-  textInput: {
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: Platform.OS === "ios" ? 12 : 8,
-  },
-
-  row: { flexDirection: "row", alignItems: "center" },
-  roleBtn: {
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 10,
-    borderWidth: 1,
-    // borderColor applied inline
-    backgroundColor: "transparent",
-  },
-  roleBtnActive: {
-    // kept for backwards compatibility if needed
-  },
-  roleText: { fontWeight: "600" },
-  roleTextActive: { fontWeight: "700" },
 
   valueText: { fontSize: 15 },
 
@@ -820,7 +850,11 @@ const ui = StyleSheet.create({
   settingLabel: { fontSize: 15 },
 
   hint: { marginTop: 8, fontSize: 12 },
+  label: { fontSize: 13, marginBottom: 6 },
+  textInput: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: Platform.OS === "ios" ? 12 : 8,
+  },
 });
-
-// small helper
-const numericOnly = (text: string) => text.replace(/[^0-9]/g, "");

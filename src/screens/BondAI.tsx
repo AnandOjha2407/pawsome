@@ -17,9 +17,13 @@ import {
   useWindowDimensions,
   KeyboardAvoidingView,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useTheme } from "../ThemeProvider";
 import { Theme } from "../theme";
+import OnboardingTutorial from "../components/OnboardingTutorial";
+import { usePageOnboarding } from "../hooks/usePageOnboarding";
+import { TutorialStep } from "../components/OnboardingTutorial";
 
 type Msg = { id: string; from: "user" | "bot"; text: string; ts: number };
 
@@ -91,6 +95,10 @@ function createStyles(theme: Theme) {
 export default function BondAI() {
   const { theme: activeTheme } = useTheme();
   const styles = createStyles(activeTheme);
+  const insets = useSafeAreaInsets();
+
+  // Onboarding
+  const { showOnboarding, completeOnboarding } = usePageOnboarding("bondai");
 
   const [value, setValue] = useState("");
   const [messages, setMessages] = useState<Msg[]>([
@@ -101,6 +109,17 @@ export default function BondAI() {
   const listRef = useRef<FlatList<Msg> | null>(null);
   const sending = useRef(false);
   const [loading, setLoading] = useState(false);
+
+  // BondAI tutorial steps
+  const BONDAI_TUTORIAL_STEPS: TutorialStep[] = [
+    {
+      id: "bondai-intro",
+      title: "Meet BondAI",
+      description:
+        "This is your AI assistant BondAI. You can ask anything related to you or your fluffy friend - training tips, health insights, behavior questions, or anything else about your bond!",
+      screen: "bondai",
+    },
+  ];
 
   // keep messagesRef in sync
   useEffect(() => {
@@ -133,36 +152,65 @@ export default function BondAI() {
 
   // Get current device data for context
   const [deviceData, setDeviceData] = useState<any>(null);
+
+  const isMountedRef = useRef(true);
   
   useEffect(() => {
-    const onData = (data: any) => {
-      setDeviceData(data);
-    };
+    isMountedRef.current = true;
     
+    const onData = (data: any) => {
+      if (!isMountedRef.current) return;
+      try {
+        // Safety: Validate data before setting
+        if (data && typeof data === "object") {
+          setDeviceData(data);
+        }
+      } catch (e) {
+        console.warn("BondAI: Error processing device data", e);
+      }
+    };
+
     try {
       const { bleManager } = require("../ble/BLEManager");
-      bleManager.on?.("data", onData);
       
+      // Safety: Check if methods exist
+      if (bleManager && typeof bleManager.on === "function") {
+        bleManager.on("data", onData);
+      }
+
       // Get initial state
-      const state = bleManager.getState?.();
-      if (state) {
-        setDeviceData({
-          human: state.human,
-          dog: state.dog,
-          sleepScore: state.sleepScore,
-          recoveryScore: state.recoveryScore,
-          strainScore: state.strainScore,
-        });
+      if (isMountedRef.current) {
+        try {
+          if (bleManager && typeof bleManager.getState === "function") {
+            const state = bleManager.getState();
+            if (state && typeof state === "object") {
+              setDeviceData({
+                human: state.human || null,
+                dog: state.dog || null,
+                sleepScore: typeof state.sleepScore === "number" ? state.sleepScore : 0,
+                recoveryScore: typeof state.recoveryScore === "number" ? state.recoveryScore : 0,
+                strainScore: typeof state.strainScore === "number" ? state.strainScore : 0,
+              });
+            }
+          }
+        } catch (stateError) {
+          console.warn("BondAI: Error getting initial state", stateError);
+        }
       }
     } catch (e) {
       console.warn("BondAI: Failed to subscribe to BLE data", e);
     }
-    
+
     return () => {
+      isMountedRef.current = false;
       try {
         const { bleManager } = require("../ble/BLEManager");
-        bleManager.off?.("data", onData);
-      } catch (e) {}
+        if (bleManager && typeof bleManager.off === "function") {
+          bleManager.off("data", onData);
+        }
+      } catch (e) {
+        console.warn("BondAI: Error removing BLE listener", e);
+      }
     };
   }, []);
 
@@ -172,13 +220,13 @@ export default function BondAI() {
 Be concise, friendly, and provide practical advice about training dogs, heart-rate telemetry, and guided relaxation for humans.
 
 Current device data:`;
-    
+
     if (deviceData) {
       if (deviceData.human) {
-        prompt += `\nHuman (GTS10): HR=${deviceData.human.heartRate || "N/A"}, SpO2=${deviceData.human.spO2 || "N/A"}, HRV=${deviceData.human.hrv || "N/A"}, Battery=${deviceData.human.battery || "N/A"}%`;
+        prompt += `\nHuman (Polar H10): HR=${deviceData.human.heartRate || "N/A"}, HRV=${deviceData.human.hrv || "N/A"}, Battery=${deviceData.human.battery || "N/A"}%`;
       }
       if (deviceData.dog) {
-        prompt += `\nDog (GTL1): HR=${deviceData.dog.heartRate || "N/A"}, SpO2=${deviceData.dog.spO2 || "N/A"}, HRV=${deviceData.dog.hrv || "N/A"}, Resp=${deviceData.dog.respiratoryRate || "N/A"}, Battery=${deviceData.dog.battery || "N/A"}%`;
+        prompt += `\nDog (Polar H10): HR=${deviceData.dog.heartRate || "N/A"}, HRV=${deviceData.dog.hrv || "N/A"}, Battery=${deviceData.dog.battery || "N/A"}%`;
       }
       if (deviceData.sleepScore !== undefined) {
         prompt += `\nBond Score: ${deviceData.sleepScore}/100, Recovery: ${deviceData.recoveryScore || 0}/100, Strain: ${deviceData.strainScore || 0}/100`;
@@ -186,25 +234,34 @@ Current device data:`;
     } else {
       prompt += `\nNo device data available yet.`;
     }
-    
+
     prompt += `\n\nIf user asks about device data, use the current readings above. Provide actionable insights based on the metrics.`;
-    
+
     return prompt;
   };
-  
+
   const systemPrompt = buildSystemPrompt();
 
   const callBackend = useCallback(
     async (userText: string) => {
-      // assemble a small history for context (system + last messages)
-      const history = [
-        { role: "system", content: systemPrompt },
-        // include last up to 8 messages to keep context short
-        ...messagesRef.current.slice(-8).map((m) => ({ role: m.from === "user" ? "user" : "assistant", content: m.text })),
-        { role: "user", content: userText },
-      ];
+      try {
+        // assemble a small history for context (system + last messages)
+        const currentMessages = messagesRef.current || [];
+        const history = [
+          { role: "system", content: systemPrompt },
+          // include last up to 8 messages to keep context short
+          ...(Array.isArray(currentMessages) ? currentMessages.slice(-8) : []).map((m: Msg) => ({ 
+            role: m.from === "user" ? "user" : "assistant", 
+            content: m.text || "" 
+          })),
+          { role: "user", content: userText },
+        ];
 
-      return await sendChat(history);
+        return await sendChat(history);
+      } catch (err) {
+        console.error("callBackend error:", err);
+        return { reply: "I encountered an error. Please try again." };
+      }
     },
     [systemPrompt]
   );
@@ -225,21 +282,33 @@ Current device data:`;
     addMessage(thinkingMsg);
 
     try {
-      const json = await callBackend(text); // expects { reply: string } from server
+      const json = await callBackend(text) as any; // expects { reply: string } from server
       const replyText = (json && (json.reply ?? json.result ?? json.text)) || "Sorry — no reply.";
       // remove thinking and add real reply
       setMessages((prev) => {
-        const filtered = prev.filter((m) => m.id !== thinkingId);
-        return [...filtered, { id: `b-${Date.now()}`, from: "bot", text: replyText, ts: Date.now() }];
+        try {
+          const safePrev = Array.isArray(prev) ? prev : [];
+          const filtered = safePrev.filter((m) => m && m.id !== thinkingId);
+          return [...filtered, { id: `b-${Date.now()}`, from: "bot", text: String(replyText), ts: Date.now() }];
+        } catch (err) {
+          console.error("Error updating messages:", err);
+          return prev; // Return previous state on error
+        }
       });
     } catch (err) {
       console.error("Chat error:", err);
       setMessages((prev) => {
-        const filtered = prev.filter((m) => m.id !== thinkingId);
-        return [
-          ...filtered,
-          { id: `err-${Date.now()}`, from: "bot", text: "I couldn't reach the server. Try again later.", ts: Date.now() },
-        ];
+        try {
+          const safePrev = Array.isArray(prev) ? prev : [];
+          const filtered = safePrev.filter((m) => m && m.id !== thinkingId);
+          return [
+            ...filtered,
+            { id: `err-${Date.now()}`, from: "bot", text: "I couldn't reach the server. Try again later.", ts: Date.now() },
+          ];
+        } catch (updateErr) {
+          console.error("Error updating error message:", updateErr);
+          return prev; // Return previous state on error
+        }
       });
     } finally {
       sending.current = false;
@@ -261,7 +330,7 @@ Current device data:`;
   };
 
   return (
-    <SafeAreaView style={styles.screen}>
+    <SafeAreaView style={[styles.screen, { paddingTop: Math.max(insets.top, 10) }]}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>BondAI</Text>
         <Text style={styles.headerSub}>AI companion — ask about training, heart-rate, or mood</Text>
@@ -275,6 +344,13 @@ Current device data:`;
         contentContainerStyle={[styles.listContent, { paddingBottom: 16 + keyboardHeight }]}
         onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: true })}
         keyboardShouldPersistTaps="handled"
+      />
+
+      {/* Onboarding Tutorial */}
+      <OnboardingTutorial
+        steps={BONDAI_TUTORIAL_STEPS}
+        visible={showOnboarding}
+        onComplete={completeOnboarding}
       />
 
       {/* Input area pinned to bottom and moved above keyboardHeight */}

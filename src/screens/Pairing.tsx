@@ -11,14 +11,17 @@ import {
   Alert,
   ActionSheetIOS,
   Platform,
+  Linking,
+  PermissionsAndroid,
 } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useRoute } from "@react-navigation/native";
 import { useRouter } from "expo-router";
-import { bleManager } from "../ble/BLEManager";
+import { bleManager, Role } from "../ble/BLEManager";
 import { useTheme } from "../ThemeProvider";
 import { Theme } from "../theme";
 import { savePairedDevice } from "../storage/pairedDevices";
+import { BleManager } from "react-native-ble-plx";
 
 type DeviceItem = {
   id: string;
@@ -43,11 +46,126 @@ export default function Pairing() {
   const [btOn, setBtOn] = useState(true);
 
   // --------------------------------------------------------------------------------------
-  // INIT
+  // INIT - Check Bluetooth state and request permissions
   // --------------------------------------------------------------------------------------
   useEffect(() => {
-    // For now assume Bluetooth is ON
-    setBtOn(true);
+    const checkBluetoothAndRequestPermissions = async () => {
+      try {
+        // Get the underlying BleManager instance
+        const manager = (bleManager as any).manager as BleManager;
+        if (!manager) {
+          console.warn("BLE Manager not available");
+          return;
+        }
+
+        // Check current Bluetooth state
+        const state = await manager.state();
+        console.log("Bluetooth state:", state);
+
+        if (state === "PoweredOff") {
+          // Bluetooth is off - request to enable it
+          if (Platform.OS === "android") {
+            Alert.alert(
+              "Bluetooth Required",
+              "Bluetooth needs to be turned on to scan for devices. Would you like to enable it now?",
+              [
+                { text: "Cancel", style: "cancel" },
+                {
+                  text: "Enable",
+                  onPress: async () => {
+                    try {
+                      // Request permissions first
+                      const granted = await PermissionsAndroid.requestMultiple([
+                        "android.permission.BLUETOOTH_SCAN",
+                        "android.permission.BLUETOOTH_CONNECT",
+                        "android.permission.ACCESS_FINE_LOCATION",
+                      ]);
+
+                      // Check if permissions granted
+                      const allGranted =
+                        granted["android.permission.BLUETOOTH_SCAN"] === PermissionsAndroid.RESULTS.GRANTED &&
+                        granted["android.permission.BLUETOOTH_CONNECT"] === PermissionsAndroid.RESULTS.GRANTED &&
+                        granted["android.permission.ACCESS_FINE_LOCATION"] === PermissionsAndroid.RESULTS.GRANTED;
+
+                      if (allGranted) {
+                        // Open Bluetooth settings to enable Bluetooth
+                        // Note: We can't programmatically enable Bluetooth on Android, but we can open settings
+                        Linking.openSettings().catch(() => {
+                          Alert.alert(
+                            "Enable Bluetooth",
+                            "Please enable Bluetooth in your device settings to continue."
+                          );
+                        });
+                      } else {
+                        Alert.alert(
+                          "Permissions Required",
+                          "Bluetooth permissions are required to scan for devices. Please grant permissions in settings."
+                        );
+                      }
+                    } catch (error) {
+                      console.warn("Failed to request permissions:", error);
+                      Alert.alert("Error", "Failed to request Bluetooth permissions.");
+                    }
+                  },
+                },
+              ]
+            );
+          } else {
+            // iOS - just show alert
+            Alert.alert(
+              "Bluetooth Required",
+              "Please enable Bluetooth in Settings to scan for devices."
+            );
+          }
+          setBtOn(false);
+        } else if (state === "Unauthorized") {
+          // Request permissions
+          if (Platform.OS === "android") {
+            try {
+              const granted = await PermissionsAndroid.requestMultiple([
+                "android.permission.BLUETOOTH_SCAN",
+                "android.permission.BLUETOOTH_CONNECT",
+                "android.permission.ACCESS_FINE_LOCATION",
+              ]);
+
+              const allGranted =
+                granted["android.permission.BLUETOOTH_SCAN"] === PermissionsAndroid.RESULTS.GRANTED &&
+                granted["android.permission.BLUETOOTH_CONNECT"] === PermissionsAndroid.RESULTS.GRANTED &&
+                granted["android.permission.ACCESS_FINE_LOCATION"] === PermissionsAndroid.RESULTS.GRANTED;
+
+              if (!allGranted) {
+                Alert.alert(
+                  "Permissions Required",
+                  "Bluetooth permissions are required to scan for devices."
+                );
+                setBtOn(false);
+                return;
+              }
+            } catch (error) {
+              console.warn("Permission request failed:", error);
+              setBtOn(false);
+              return;
+            }
+          }
+          setBtOn(false);
+        } else if (state === "PoweredOn") {
+          setBtOn(true);
+        } else {
+          setBtOn(false);
+        }
+
+        // Listen for state changes
+        manager.onStateChange((newState) => {
+          console.log("Bluetooth state changed:", newState);
+          setBtOn(newState === "PoweredOn");
+        });
+      } catch (error) {
+        console.warn("Failed to check Bluetooth state:", error);
+        setBtOn(false);
+      }
+    };
+
+    checkBluetoothAndRequestPermissions();
 
     const onData = () => { };
     bleManager.on?.("data", onData);
@@ -58,38 +176,80 @@ export default function Pairing() {
   }, []);
 
   // --------------------------------------------------------------------------------------
-  // SCANNING - Only shows GTS10, GTL1, and Vest devices
+  // SCANNING - Shows ANY Polar H10 or PossumBond-Vest devices by name pattern
   // --------------------------------------------------------------------------------------
   const startScan = () => {
-    setDevices([]);
-    setIsScanning(true);
+    try {
+      setDevices([]);
+      setIsScanning(true);
 
-    bleManager.startScan((d) => {
-      // Double-check that this is one of our device types
-      // (BLEManager already filters, but this is an extra safety check)
-      const detectedType = bleManager.detectDeviceType(d.name);
-      
-      if (!detectedType) {
-        // Skip unknown devices
+      // Safety check: ensure bleManager and startScan exist
+      if (!bleManager || typeof bleManager.startScan !== "function") {
+        Alert.alert("Error", "Bluetooth manager not available");
+        setIsScanning(false);
         return;
       }
 
-      setDevices((prev) => {
-        // Don't add duplicates
-        if (prev.some((x) => x.id === d.id)) return prev;
-        return [...prev, d];
-      });
-    });
+      bleManager.startScan((d) => {
+        try {
+          // Safety: Validate device data
+          if (!d || !d.id) return;
 
-    // Auto-stop after 10 sec (increased to give more time to find devices)
+          // Note: Device name might be null for some devices, but we can still match by service UUID
+          const nameLower = (d.name || "").toLowerCase();
+          
+          // Match by name pattern - works for ANY Polar or Vest
+          // CRITICAL: Exact match for "PAWSOMEBOND-VEST" (case-insensitive)
+          const isPolarH10 = nameLower.includes("polar h10") || 
+                            nameLower.includes("polar h 10");
+          const isVest = nameLower === "pawsomebond-vest";
+          
+          // Note: Service UUID matching is handled in BLEManager.ts
+          // This screen just filters the results from BLEManager
+          
+          if (!isPolarH10 && !isVest) {
+            // Skip unknown devices
+            return;
+          }
+
+          setDevices((prev) => {
+            try {
+              // Safety: Ensure prev is an array
+              const safePrev = Array.isArray(prev) ? prev : [];
+              // Don't add duplicates
+              if (safePrev.some((x) => x && x.id === d.id)) return safePrev;
+              return [...safePrev, d];
+            } catch (err) {
+              console.warn("Error updating device list:", err);
+              return prev;
+            }
+          });
+        } catch (err) {
+          console.warn("Error processing scanned device:", err);
+        }
+      });
+    } catch (error: any) {
+      console.error("Failed to start scan:", error);
+      Alert.alert("Error", `Failed to start scanning: ${error?.message || "Unknown error"}`);
+      setIsScanning(false);
+    }
+
+    // Auto-stop after 15 sec (increased to give more time to find devices)
     setTimeout(() => {
       stopScan();
-    }, 10000);
+    }, 15000);
   };
 
   const stopScan = () => {
-    setIsScanning(false);
-    bleManager.stopScan();
+    try {
+      setIsScanning(false);
+      if (bleManager && typeof bleManager.stopScan === "function") {
+        bleManager.stopScan();
+      }
+    } catch (error: any) {
+      console.warn("Error stopping scan:", error);
+      setIsScanning(false);
+    }
   };
 
   useEffect(() => {
@@ -104,39 +264,54 @@ export default function Pairing() {
   // --------------------------------------------------------------------------------------
 
   // Helper function to get device type icon and label
-  const getDeviceTypeInfo = (deviceName: string | null | undefined) => {
-    const detectedType = bleManager.detectDeviceType(deviceName);
-    switch (detectedType) {
-      case "human":
-        return { icon: "👤", label: "Human Fitband (GTS10)", type: detectedType };
-      case "dog":
-        return { icon: "🐕", label: "Dog Collar (GTL1)", type: detectedType };
-      case "vest":
-        return { icon: "🦺", label: "Therapy Vest (ESP32)", type: detectedType };
-      default:
-        return { icon: "❓", label: "Unknown Device", type: null };
+  const getDeviceTypeInfo = (deviceName: string | null | undefined, deviceId?: string | null) => {
+    if (!deviceName) {
+      return { icon: "❓", label: "Unknown Device", type: null };
     }
+    
+    const nameLower = deviceName.toLowerCase();
+    
+    // Check if it's a vest - CRITICAL: Exact match for "PAWSOMEBOND-VEST"
+    if (nameLower === "pawsomebond-vest") {
+      return { icon: "🦺", label: "PAWSOMEBOND-VEST", type: "vest" as Role };
+    }
+    
+    // Check if it's a Polar H10
+    if (nameLower.includes("polar h10") || nameLower.includes("polar h 10")) {
+      return { icon: "💓", label: "Polar H10 (select role)", type: null };
+    }
+    
+    return { icon: "❓", label: "Unknown Device", type: null };
   };
 
   const pickRole = (dev: DeviceItem) => {
-    // Try to auto-detect device type from name
-    const detectedType = bleManager.detectDeviceType(dev.name);
-
-    if (detectedType) {
-      // Device type auto-detected - connect immediately without popup
-      finalConnect(dev, detectedType);
-    } else {
-      // Could not auto-detect - show manual picker as fallback
-      showManualPicker(dev);
+    if (!dev.name) {
+      Alert.alert("Error", "Device name is missing");
+      return;
     }
+    
+    const nameLower = (dev.name || "").toLowerCase();
+    
+    // If it's a vest - CRITICAL: Exact match for "PAWSOMEBOND-VEST"
+    if (nameLower === "pawsomebond-vest") {
+      finalConnect(dev, "vest");
+      return;
+    }
+    
+    // For Polar H10, always show role picker (user selects Human/Dog/Vest)
+    // This works with ANY Polar H10 device, not just hardcoded MACs
+    showManualPicker(dev);
   };
 
   const showManualPicker = (dev: DeviceItem) => {
+    const deviceName = dev.name ?? "Unknown Device";
+    
     if (Platform.OS === "ios") {
       ActionSheetIOS.showActionSheetWithOptions(
         {
-          title: `Select Device Type`,
-          options: ["Human (GTS10)", "Dog (GTL1)", "Vest (ESP32)", "Cancel"],
+          title: `Assign Role to Device`,
+          message: `${deviceName}\n\nSelect how this device will be used:`,
+          options: ["Human (Polar H10)", "Dog (Polar H10)", "Vest (PossumBond)", "Cancel"],
           cancelButtonIndex: 3,
         },
         (index) => {
@@ -148,12 +323,12 @@ export default function Pairing() {
     } else {
       // Android fallback — simple Alert-based picker
       Alert.alert(
-        "Select Device Type",
-        `What device is this?\n\n${dev.name ?? dev.id}`,
+        "Assign Device Role",
+        `What role should this device have?\n\n${deviceName}`,
         [
-          { text: "Human (GTS10)", onPress: () => finalConnect(dev, "human") },
-          { text: "Dog (GTL1)", onPress: () => finalConnect(dev, "dog") },
-          { text: "Vest (ESP32)", onPress: () => finalConnect(dev, "vest") },
+          { text: "Human (Polar H10)", onPress: () => finalConnect(dev, "human") },
+          { text: "Dog (Polar H10)", onPress: () => finalConnect(dev, "dog") },
+          { text: "Vest (PossumBond)", onPress: () => finalConnect(dev, "vest") },
           { text: "Cancel", style: "cancel" },
         ]
       );
@@ -168,24 +343,75 @@ export default function Pairing() {
     type: "human" | "dog" | "vest"
   ) => {
     try {
+      // Safety: Validate device
+      if (!device || !device.id) {
+        Alert.alert("Error", "Invalid device selected.");
+        return;
+      }
+
       const descriptor = {
         ...device,
         mac: device.mac ?? device.id,
         name: device.name ?? `${type} device`,
-        rssi: device.rssi ?? -60,
+        rssi: (typeof device.rssi === 'number') ? device.rssi : -60,
       };
 
-      bleManager.assignDeviceType(descriptor, type);
-      await bleManager.connectToScannedDevice(descriptor, type);
-      await savePairedDevice(type, descriptor);
+      // Safety: Validate descriptor
+      if (!descriptor.id || descriptor.id.length === 0) {
+        Alert.alert("Error", "Device ID is missing.");
+        return;
+      }
+
+      // Safety: Check if bleManager methods exist
+      if (!bleManager || typeof bleManager.assignDeviceType !== "function") {
+        Alert.alert("Error", "Bluetooth manager not available");
+        return;
+      }
+
+      try {
+        bleManager.assignDeviceType(descriptor, type);
+      } catch (assignError: any) {
+        console.warn("Failed to assign device type:", assignError);
+        Alert.alert("Error", "Failed to assign device type. Check logs.");
+        return;
+      }
+
+      // Safety: Check if connectToScannedDevice exists
+      if (typeof bleManager.connectToScannedDevice !== "function") {
+        Alert.alert("Error", "Connection function not available");
+        return;
+      }
+
+      try {
+        await bleManager.connectToScannedDevice(descriptor, type);
+      } catch (connectError: any) {
+        console.warn("Connect failed:", connectError);
+        const errorMessage = connectError?.message || connectError?.toString() || "Unknown error";
+        Alert.alert(
+          "Connection Failed", 
+          `Failed to connect to ${descriptor.name || type} device:\n\n${errorMessage}\n\nPlease ensure:\n• Device is powered on\n• Device is nearby\n• Bluetooth is enabled\n• Try scanning again`
+        );
+        return;
+      }
+
+      try {
+        await savePairedDevice(type, descriptor);
+      } catch (saveError: any) {
+        console.warn("Failed to save paired device:", saveError);
+        // Non-critical - connection succeeded even if save failed
+      }
 
       Alert.alert(
         "Connected",
-        `Connected to ${descriptor.name} as ${type.toUpperCase()}`
+        `Successfully connected to ${descriptor.name || type} device as ${type.toUpperCase()}`
       );
-    } catch (err) {
-      console.warn("Connect failed", err);
-      Alert.alert("Error", "Failed to connect. Check logs.");
+    } catch (err: any) {
+      console.warn("Connect failed:", err);
+      const errorMessage = err?.message || err?.toString() || "Unknown error";
+      Alert.alert(
+        "Connection Error", 
+        `Failed to connect:\n\n${errorMessage}\n\nPlease try:\n• Scanning again\n• Checking device power\n• Ensuring Bluetooth is enabled`
+      );
     }
   };
 
@@ -193,7 +419,7 @@ export default function Pairing() {
   // RENDER LIST ROW
   // --------------------------------------------------------------------------------------
   const renderItem = ({ item }: { item: DeviceItem }) => {
-    const typeInfo = getDeviceTypeInfo(item.name);
+    const typeInfo = getDeviceTypeInfo(item.name, item.id);
 
     return (
       <TouchableOpacity
@@ -228,7 +454,7 @@ export default function Pairing() {
     <View style={styles.screen}>
       <View style={styles.header}>
         <Text style={styles.title}>Find Your Device</Text>
-        <Text style={styles.subtitle}>Scanning for GTS10, GTL1, and Vest devices only</Text>
+        <Text style={styles.subtitle}>Scanning for any Polar H10 or PossumBond-Vest devices</Text>
         <View style={styles.headerActions}>
           <TouchableOpacity onPress={() => router.push("/dashboard")}>
             <Text style={styles.link}>Open Dashboard</Text>
@@ -239,7 +465,7 @@ export default function Pairing() {
         </View>
         {preferredTarget ? (
           <Text style={styles.preferred}>
-            Prefers {preferredTarget === "dog" ? "Dog collar" : preferredTarget === "human" ? "Human wearable" : "Therapy vest"}
+            Prefers {preferredTarget === "dog" ? "Dog Polar H10" : preferredTarget === "human" ? "Human Polar H10" : "Therapy vest"}
           </Text>
         ) : null}
       </View>
@@ -280,10 +506,10 @@ export default function Pairing() {
               <View style={styles.empty}>
                 <Text style={styles.emptyText}>No compatible devices found</Text>
                 <Text style={styles.emptySub}>
-                  Looking for: GTS10, GTL1, or Vest devices
+                  Looking for: Polar H10 or PAWSOMEBOND-VEST devices
                 </Text>
                 <Text style={[styles.emptySub, { marginTop: 8, fontSize: 12 }]}>
-                  Make sure your devices are powered on and nearby.
+                  Make sure your devices are powered on and nearby. Tap a device to assign its role (Human/Dog/Vest).
                 </Text>
               </View>
             }

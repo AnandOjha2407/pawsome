@@ -26,25 +26,30 @@ import {
   Switch,
   FlatList,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   MaterialIcons,
   MaterialCommunityIcons,
   FontAwesome5,
 } from "@expo/vector-icons";
-import { bleManager } from "../ble/BLEManager";
+import { bleManager, THERAPY } from "../ble/BLEManager";
 import Constants from "expo-constants";
 import Svg, { Circle, G } from "react-native-svg";
 import { Animated as RNAnimated } from "react-native";
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
+import OnboardingTutorial from "../components/OnboardingTutorial";
+import { useOnboarding } from "../hooks/useOnboarding";
+import { TUTORIAL_STEPS } from "../config/tutorialSteps";
+import { tutorialMeasurementRegistry } from "../utils/tutorialMeasurement";
 const AnimatedG = RNAnimated.createAnimatedComponent(G);
 
 type Props = { navigation?: any; route?: any };
 const screenW = Dimensions.get("window").width;
+const SCREEN_HEIGHT = Dimensions.get("window").height;
 
 /* ---------- Static assets (ensure these exist) ---------- */
-const bannerDog = require("../../assets/images/banner.jpg");
-const avatarDog = require("../../assets/images/avatar_placeholder.png");
+// Avatar placeholder removed - using icon-based UI instead
 
 /* ---------- Small helpers ---------- */
 function AnimatedButton({
@@ -378,13 +383,39 @@ function DeviceDetailsModal({
   };
 
   const sendCueLocal = async (type: "vibrate" | "beep" | "tone") => {
-    const vibration = type === "vibrate" ? "gentle" : "pulse";
     try {
-      await bleManager.sendComfortSignal?.("dog", { vibration });
-      Alert.alert("Comfort", `Sent ${type} cue`);
-    } catch (e) {
-      console.warn(e);
-      Alert.alert("Comfort", "Failed to send cue");
+      // Check if vest is connected
+      if (!bleManager?.isRoleConnected?.("vest")) {
+        Alert.alert("Vest Not Connected", "Please connect the therapy vest first.");
+        return;
+      }
+
+      // Use new sendTherapyCommand API
+      let commandCode: number;
+      if (type === "vibrate") {
+        commandCode = THERAPY.MASSAGE; // Vibration only
+      } else {
+        commandCode = THERAPY.CALM; // Use calm for beep/tone
+      }
+
+      if (typeof bleManager.sendTherapyCommand === "function") {
+        const success = await bleManager.sendTherapyCommand(commandCode);
+        if (success) {
+          Alert.alert("Comfort", `Sent ${type} cue`);
+        } else {
+          Alert.alert("Comfort", "Failed to send cue. Please try again.");
+        }
+      } else if (typeof bleManager.sendComfortSignal === "function") {
+        // Fallback to legacy method
+        const vibration = type === "vibrate" ? "gentle" : "pulse";
+        await bleManager.sendComfortSignal("dog", { vibration });
+        Alert.alert("Comfort", `Sent ${type} cue`);
+      } else {
+        Alert.alert("Error", "Cue function not available");
+      }
+    } catch (e: any) {
+      console.warn("Send cue error:", e);
+      Alert.alert("Comfort", `Failed to send cue: ${e?.message || "Unknown error"}`);
     }
   };
 
@@ -446,18 +477,30 @@ function DeviceDetailsModal({
 
           <View style={{ marginTop: 12 }}>
             <Text style={{ fontWeight: "700", color: theme.textDark }}>
-              {state.assignedProfile
+              {state?.assignedProfile
                 ? `${state.assignedProfile}`
                 : "Unassigned"}
             </Text>
             <Text style={{ color: theme.textMuted, marginTop: 4 }}>
-              {state.isConnected ? "Connected" : "Not connected"}
+              {state?.isConnected ? "Connected" : "Not connected"}
             </Text>
             <Text style={{ color: theme.textMuted, marginTop: 6 }}>
-              Battery: {state.human?.battery ?? state.dog?.battery ?? "--"}%
+              Battery: {(() => {
+                try {
+                  return state?.human?.battery ?? state?.dog?.battery ?? "--";
+                } catch (e) {
+                  return "--";
+                }
+              })()}%
             </Text>
             <Text style={{ color: theme.textMuted, marginTop: 2 }}>
-              RSSI: {(state as any).rssi ?? (bleManager as any).rssi ?? "--"}
+              RSSI: {(() => {
+                try {
+                  return (state as any)?.rssi ?? (bleManager as any)?.rssi ?? "--";
+                } catch (e) {
+                  return "--";
+                }
+              })()}
             </Text>
             <Text style={{ color: theme.textMuted, marginTop: 2 }}>
               FW: {state?.firmwareVersion ?? "--"}
@@ -466,7 +509,15 @@ function DeviceDetailsModal({
 
           <View style={{ marginTop: 12, flexDirection: "row", gap: 10 }}>
             <TouchableOpacity
-              onPress={() => bleManager.manualFetch?.()}
+              onPress={() => {
+                try {
+                  if (bleManager && typeof bleManager.manualFetch === "function") {
+                    bleManager.manualFetch();
+                  }
+                } catch (e: any) {
+                  console.warn("Manual fetch error:", e);
+                }
+              }}
               style={{
                 backgroundColor: theme.softPrimary,
                 padding: 10,
@@ -660,14 +711,52 @@ export default function Home({ navigation }: Props) {
   // ---------- THREE RING DISPLAY WITH TRIANGULAR LAYOUT + CENTER ENLARGE ----------
   const router = useRouter();
   const { theme: activeTheme } = useTheme();
+  const { showOnboarding, completeOnboarding } = useOnboarding();
+  const insets = useSafeAreaInsets();
+
+  // Refs for tutorial measurements
+  const ringsContainerRef = useRef<View>(null);
   const [connectionState, setConnectionState] = useState<
     ReturnType<typeof bleManager.getConnections> | undefined
-  >(bleManager.getConnections?.());
+  >(() => {
+    try {
+      return bleManager.getConnections?.() ?? undefined;
+    } catch (e) {
+      return undefined;
+    }
+  });
+  
+  const isMountedRef = useRef(true);
+  
   useEffect(() => {
-    const handler = (snapshot: any) => setConnectionState(snapshot);
-    (bleManager as any).on?.("connections", handler);
+    isMountedRef.current = true;
+    
+    const handler = (snapshot: any) => {
+      if (!isMountedRef.current) return;
+      try {
+        setConnectionState(snapshot);
+      } catch (e) {
+        console.warn("Error updating connection state:", e);
+      }
+    };
+    
+    try {
+      if (bleManager && typeof (bleManager as any).on === "function") {
+        (bleManager as any).on("connections", handler);
+      }
+    } catch (e) {
+      console.warn("Error setting up connections listener:", e);
+    }
+    
     return () => {
-      (bleManager as any).off?.("connections", handler);
+      isMountedRef.current = false;
+      try {
+        if (bleManager && typeof (bleManager as any).off === "function") {
+          (bleManager as any).off("connections", handler);
+        }
+      } catch (e) {
+        console.warn("Error removing connections listener:", e);
+      }
     };
   }, []);
   const dogOnline = !!connectionState?.connected?.dog;
@@ -681,19 +770,83 @@ export default function Home({ navigation }: Props) {
 
   const [selected, setSelected] = useState<number | null>(null);
 
+  // Register measurement callbacks for tutorial
+  useEffect(() => {
+    // Register rings measurement
+    tutorialMeasurementRegistry.register("rings", async () => {
+      return new Promise((resolve) => {
+        try {
+          if (ringsContainerRef.current) {
+            ringsContainerRef.current.measureInWindow((x, y, width, height) => {
+              try {
+                resolve({ x, y, width, height: height || 300 });
+              } catch (err) {
+                console.warn("Error in measureInWindow callback:", err);
+                resolve({ x: 0, y: 0, width: 200, height: 300 });
+              }
+            });
+          } else {
+            // Fallback if ref is not available
+            resolve({ x: 0, y: 0, width: 200, height: 300 });
+          }
+        } catch (err) {
+          console.warn("Error measuring rings:", err);
+          resolve({ x: 0, y: 0, width: 200, height: 300 });
+        }
+      });
+    });
+
+    // Tutorial measurement registrations removed - simplified tutorial only highlights rings
+
+    return () => {
+      tutorialMeasurementRegistry.unregister("rings");
+    };
+  }, []);
+
   // BLE listener
   useEffect(() => {
     const fn = (data: any) => {
-      if (!data) return;
-      setRingScores({
-        sleep: data.sleepScore ?? 0,
-        recovery: data.recoveryScore ?? 0,
-        strain: data.strainScore ?? 0,
-      });
+      try {
+        if (!data || typeof data !== 'object') return;
+        
+        // Safety: Validate and clamp scores to valid range
+        const sleep = typeof data.sleepScore === 'number' && data.sleepScore >= 0 && data.sleepScore <= 100 
+          ? data.sleepScore 
+          : 0;
+        const recovery = typeof data.recoveryScore === 'number' && data.recoveryScore >= 0 && data.recoveryScore <= 100 
+          ? data.recoveryScore 
+          : 0;
+        const strain = typeof data.strainScore === 'number' && data.strainScore >= 0 && data.strainScore <= 100 
+          ? data.strainScore 
+          : 0;
+        
+        setRingScores({
+          sleep,
+          recovery,
+          strain,
+        });
+      } catch (error: any) {
+        console.warn("Error processing BLE data in Home:", error?.message ?? error);
+        // Don't crash - just log the error
+      }
     };
-    bleManager.on("data", fn);
+    
+    try {
+      if (bleManager && typeof bleManager.on === "function") {
+        bleManager.on("data", fn);
+      }
+    } catch (error: any) {
+      console.warn("Error setting up BLE listener in Home:", error?.message ?? error);
+    }
+    
     return () => {
-      bleManager.off("data", fn);
+      try {
+        if (bleManager && typeof bleManager.off === "function") {
+          bleManager.off("data", fn);
+        }
+      } catch (error: any) {
+        console.warn("Error removing BLE listener in Home:", error?.message ?? error);
+      }
     };
   }, []);
 
@@ -1008,7 +1161,7 @@ export default function Home({ navigation }: Props) {
   const CAROUSEL_SLIDES = [
     {
       title: "Track & Train",
-      text: "Real-time telemetry for your dog. Heart rate, activity, and AI-driven training suggestions.",
+      text: "Real-time telemetry for your dog.",
       icon: <MaterialCommunityIcons name="pulse" size={42} color={activeTheme.textOnPrimary} />,
     },
     {
@@ -1020,7 +1173,7 @@ export default function Home({ navigation }: Props) {
     },
     {
       title: "BondAI Chat",
-      text: "Ask BondAI for training tips, health insights and quick exercises — contextual to your device data.",
+      text: "Ask BondAI for training tips, health insights.",
       icon: <MaterialIcons name="chat" size={42} color={activeTheme.textOnPrimary} />,
     },
   ];
@@ -1030,22 +1183,55 @@ export default function Home({ navigation }: Props) {
 
   // deviceState (derived from bleManager)
   const [deviceState, setDeviceState] = useState<any>(
-    bleManager.getState?.() ?? { isConnected: false }
+    (() => {
+      try {
+        return bleManager.getState?.() ?? { isConnected: false };
+      } catch (e) {
+        return { isConnected: false };
+      }
+    })()
   );
+  const isMountedDeviceRef = useRef(true);
+  
   useEffect(() => {
-    const update = () =>
-      setDeviceState(bleManager.getState?.() ?? { isConnected: false });
+    isMountedDeviceRef.current = true;
+    
+    const update = () => {
+      if (!isMountedDeviceRef.current) return;
+      try {
+        setDeviceState(bleManager.getState?.() ?? { isConnected: false });
+      } catch (e) {
+        console.warn("Error updating device state:", e);
+      }
+    };
     const onData = () => update();
     const onAssigned = () => update();
     const onLogs = () => update();
-    bleManager.on("data", onData);
-    bleManager.on("assigned", onAssigned);
-    bleManager.on("logs", onLogs);
-    update();
+    
+    try {
+      if (bleManager && typeof bleManager.on === "function") {
+        bleManager.on("data", onData);
+        bleManager.on("assigned", onAssigned);
+        bleManager.on("logs", onLogs);
+        if (isMountedDeviceRef.current) {
+          update();
+        }
+      }
+    } catch (e) {
+      console.warn("Error setting up BLE listeners:", e);
+    }
+    
     return () => {
-      bleManager.off("data", onData);
-      bleManager.off("assigned", onAssigned);
-      bleManager.off("logs", onLogs);
+      isMountedDeviceRef.current = false;
+      try {
+        if (bleManager && typeof bleManager.off === "function") {
+          bleManager.off("data", onData);
+          bleManager.off("assigned", onAssigned);
+          bleManager.off("logs", onLogs);
+        }
+      } catch (e) {
+        console.warn("Error removing BLE listeners:", e);
+      }
     };
   }, []);
 
@@ -1085,50 +1271,99 @@ export default function Home({ navigation }: Props) {
 
   // training actions
   const startTraining = useCallback(() => {
-    if (
-      !bleManager.isRoleConnected?.("dog") ||
-      !bleManager.isRoleConnected?.("vest")
-    ) {
-      Alert.alert(
-        "Devices required",
-        "Connect both the dog collar and therapy vest before starting a session."
-      );
-      return;
-    }
     try {
-      bleManager.startTrainingSession?.();
-      setIsTraining(true);
-      bleManager.sendComfortSignal?.("dog", { vibration: "gentle" });
-      Alert.alert("Training", "Training started.");
-    } catch (e) {
-      console.warn(e);
-    }
-  }, []);
-  const stopTraining = useCallback(() => {
-    try {
-      bleManager.stopTrainingSession?.();
-      setIsTraining(false);
-      bleManager.sendComfortSignal?.("human", { vibration: "pulse" });
-      Alert.alert("Training", "Training stopped.");
-    } catch (e) {
-      console.warn(e);
-    }
-  }, []);
-  const sendComfort = useCallback(
-    async (target: "dog" | "human", vibration: "gentle" | "pulse" = "gentle") => {
-      if (!bleManager.isRoleConnected?.("vest")) {
-        Alert.alert("Therapy Vest", "Connect the therapy vest before sending comfort signals.");
+      // Safety: Check if methods exist
+      if (!bleManager || typeof bleManager.isRoleConnected !== "function") {
+        Alert.alert("Error", "Bluetooth manager not available");
         return;
       }
-      try {
-        await bleManager.sendComfortSignal?.(target, { vibration });
+
+      if (
+        !bleManager.isRoleConnected("dog") ||
+        !bleManager.isRoleConnected("vest")
+      ) {
         Alert.alert(
-          "Comfort",
-          target === "dog" ? "Comfort signal sent to Bodhi." : "Comfort signal sent to you."
+          "Devices required",
+          "Connect both the dog collar and therapy vest before starting a session."
         );
-      } catch (e) {
+        return;
+      }
+      
+      if (typeof bleManager.startTrainingSession === "function") {
+        bleManager.startTrainingSession();
+      }
+      setIsTraining(true);
+      
+      if (typeof bleManager.sendComfortSignal === "function") {
+        bleManager.sendComfortSignal("dog", { vibration: "gentle" });
+      }
+      Alert.alert("Training", "Training started.");
+    } catch (e: any) {
+      console.warn("Start training error:", e);
+      Alert.alert("Error", `Failed to start training: ${e?.message || "Unknown error"}`);
+    }
+  }, []);
+  
+  const stopTraining = useCallback(() => {
+    try {
+      if (bleManager && typeof bleManager.stopTrainingSession === "function") {
+        bleManager.stopTrainingSession();
+      }
+      setIsTraining(false);
+      
+      if (bleManager && typeof bleManager.sendComfortSignal === "function") {
+        bleManager.sendComfortSignal("human", { vibration: "pulse" });
+      }
+      
+      
+      Alert.alert("Training", "Training stopped.");
+    } catch (e: any) {
+      console.warn("Stop training error:", e);
+      setIsTraining(false); // Ensure state is updated even on error
+    }
+  }, []);
+  
+  const sendComfort = useCallback(
+    async (target: "dog" | "human", vibration: "gentle" | "pulse" = "gentle") => {
+      try {
+        // Safety: Check if methods exist
+        if (!bleManager || typeof bleManager.isRoleConnected !== "function") {
+          Alert.alert("Error", "Bluetooth manager not available");
+          return;
+        }
+
+        if (!bleManager.isRoleConnected("vest")) {
+          Alert.alert("Therapy Vest", "Connect the therapy vest before sending comfort signals.");
+          return;
+        }
+        
+        // Use new sendTherapyCommand API
+        if (typeof bleManager.sendTherapyCommand === "function") {
+          // Map comfort signals to therapy commands
+          const commandCode = vibration === "gentle" ? THERAPY.MASSAGE : THERAPY.CALM;
+          const success = await bleManager.sendTherapyCommand(commandCode);
+          
+          if (success) {
+            Alert.alert(
+              "Comfort",
+              target === "dog" ? "Comfort signal sent to your dog." : "Comfort signal sent to you."
+            );
+          } else {
+            Alert.alert("Error", "Failed to send comfort signal. Please try again.");
+          }
+        } else if (typeof bleManager.sendComfortSignal === "function") {
+          // Fallback to legacy method
+          await bleManager.sendComfortSignal(target, { vibration });
+          Alert.alert(
+            "Comfort",
+            target === "dog" ? "Comfort signal sent to your dog." : "Comfort signal sent to you."
+          );
+        } else {
+          Alert.alert("Error", "Comfort signal function not available");
+        }
+      } catch (e: any) {
         console.warn("Comfort signal failed", e);
-        Alert.alert("Comfort", "Failed to send comfort signal.");
+        Alert.alert("Comfort", `Failed to send comfort signal: ${e?.message || "Unknown error"}`);
       }
     },
     []
@@ -1137,39 +1372,84 @@ export default function Home({ navigation }: Props) {
   // manual sync
   const manualSync = useCallback(() => {
     try {
-      bleManager.manualFetch?.();
-      Alert.alert("Sync", "Requested latest telemetry (mock).");
-    } catch (e) {
-      console.warn(e);
+      if (bleManager && typeof bleManager.manualFetch === "function") {
+        bleManager.manualFetch();
+        Alert.alert("Sync", "Requested latest telemetry (mock).");
+      } else {
+        Alert.alert("Error", "Sync function not available");
+      }
+    } catch (e: any) {
+      console.warn("Sync error:", e);
+      Alert.alert("Error", `Sync failed: ${e?.message || "Unknown error"}`);
     }
   }, []);
 
   // simple Pair action (opens Pairing screen)
   const onPair = useCallback(() => {
-    if (navigation) {
-      navigation.navigate("Pairing");
-    } else {
-      router.push("/pairing");
+    try {
+      if (navigation) {
+        navigation.navigate("Pairing");
+      } else {
+        router.push("/pairing");
+      }
+    } catch (err: any) {
+      console.error("Navigation error:", err);
+      Alert.alert("Error", "Could not navigate to Pairing screen. Please try again.");
     }
   }, [navigation, router]);
 
-  // Device meta helpers (defensive casts)
-  const assignedName = deviceState.assignedProfile
-    ? deviceState.assignedProfile === "human"
-      ? "You (assigned)"
-      : "Dog (assigned)"
-    : "No device assigned";
-  const connected = !!deviceState.isConnected;
-  const deviceBattery = connected
-    ? deviceState.human?.battery ?? deviceState.dog?.battery ?? "--"
-    : "--";
-  const deviceRssi =
-    (deviceState as any).rssi ?? (bleManager as any).rssi ?? "--";
-  const sessions = (deviceState.sessions ?? []) as any[];
+  // Device meta helpers (defensive casts with safety checks)
+  const assignedName = (() => {
+    try {
+      if (deviceState && deviceState.assignedProfile) {
+        return deviceState.assignedProfile === "human"
+          ? "You (assigned)"
+          : "Dog (assigned)";
+      }
+    } catch (e) {
+      console.warn("Error reading assignedProfile:", e);
+    }
+    return "No device assigned";
+  })();
+  
+  const connected = (() => {
+    try {
+      return !!(deviceState && deviceState.isConnected);
+    } catch (e) {
+      return false;
+    }
+  })();
+  
+  const deviceBattery = (() => {
+    try {
+      if (connected && deviceState) {
+        return deviceState.human?.battery ?? deviceState.dog?.battery ?? "--";
+      }
+    } catch (e) {
+      console.warn("Error reading device battery:", e);
+    }
+    return "--";
+  })();
+  
+  const deviceRssi = (() => {
+    try {
+      return (deviceState as any)?.rssi ?? (bleManager as any)?.rssi ?? "--";
+    } catch (e) {
+      return "--";
+    }
+  })();
+  
+  const sessions = (() => {
+    try {
+      return Array.isArray(deviceState?.sessions) ? deviceState.sessions : [];
+    } catch (e) {
+      return [];
+    }
+  })();
 
   /* ---------- Render ---------- */
   return (
-    <SafeAreaView style={styles.screen}>
+    <SafeAreaView style={[styles.screen, { paddingTop: Math.max(insets.top, 10) }]}>
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
@@ -1188,37 +1468,41 @@ export default function Home({ navigation }: Props) {
 
         {/* small header actions */}
         <View style={{ flexDirection: "row", gap: 10 }}>
-          <TouchableOpacity
-            onPress={() => {
-              if (navigation) {
-                navigation.navigate("BondAI");
-              } else {
-                router.push("/(tabs)/bondai");
-              }
-            }}
-            style={{ padding: 8 }}
-            accessibilityLabel="Open BondAI"
-          >
-            <MaterialIcons name="chat" size={20} color={activeTheme.primary} />
-          </TouchableOpacity>
+          <View collapsable={false}>
+            <TouchableOpacity
+              onPress={() => {
+                if (navigation) {
+                  navigation.navigate("BondAI");
+                } else {
+                  router.push("/bondai");
+                }
+              }}
+              style={{ padding: 8 }}
+              accessibilityLabel="Open BondAI"
+            >
+              <MaterialIcons name="chat" size={20} color={activeTheme.primary} />
+            </TouchableOpacity>
+          </View>
 
-          <TouchableOpacity
-            onPress={() => {
-              if (navigation) {
-                navigation.navigate("Settings");
-              } else {
-                router.push("/(tabs)/settings");
-              }
-            }}
-            style={{ padding: 8 }}
-            accessibilityLabel="Settings"
-          >
-            <MaterialIcons
-              name="settings"
-              size={20}
-              color={activeTheme.primary}
-            />
-          </TouchableOpacity>
+          <View collapsable={false}>
+            <TouchableOpacity
+              onPress={() => {
+                if (navigation) {
+                  navigation.navigate("Settings");
+                } else {
+                  router.push("/settings");
+                }
+              }}
+              style={{ padding: 8 }}
+              accessibilityLabel="Settings"
+            >
+              <MaterialIcons
+                name="settings"
+                size={20}
+                color={activeTheme.primary}
+              />
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
 
@@ -1232,42 +1516,24 @@ export default function Home({ navigation }: Props) {
         )}
         scrollEventThrottle={16}
       >
-        {/* Parallax banner */}
-        <View style={styles.parallaxBannerWrap}>
-          <Animated.Image
-            source={bannerDog}
-            style={[
-              styles.parallaxBanner,
-              {
-                transform: [
-                  {
-                    translateY: scrollY.interpolate({
-                      inputRange: [-200, 0, 200],
-                      outputRange: [-20, 0, 40],
-                      extrapolate: "clamp",
-                    }),
-                  },
-                  {
-                    scale: scrollY.interpolate({
-                      inputRange: [-200, 0],
-                      outputRange: [1.08, 1],
-                      extrapolate: "clamp",
-                    }),
-                  },
-                ],
-              },
-            ]}
-          />
-          <View
-            style={{
-              position: "absolute",
-              left: 0,
-              right: 0,
-              bottom: 0,
-              height: 48,
-              backgroundColor: "rgba(0,0,0,0.06)",
-            }}
-          />
+        {/* Content starts directly here - no banner */}
+
+        {/* Bond Score Rings - 3 separate circles */}
+        <View
+          ref={ringsContainerRef}
+          collapsable={false}
+          style={{
+            marginTop: 18,
+            gap: 22,
+            alignItems: "center",
+            marginBottom: 20,
+            minHeight: 300, // Ensure consistent measurement
+          }}
+          onLayout={() => {
+            // Trigger re-measurement when layout changes
+          }}
+        >
+          {ThreeRingDisplay}
         </View>
 
         {/* Device Strip — TAP to open details */}
@@ -1293,9 +1559,7 @@ export default function Home({ navigation }: Props) {
               <View>
                 <Text style={styles.deviceName}>
                   {connected
-                    ? deviceState.assignedProfile
-                      ? assignedName
-                      : "Connected"
+                    ? (deviceState?.assignedProfile ? assignedName : "Connected")
                     : "No device connected"}
                 </Text>
                 <Text style={styles.deviceMeta}>
@@ -1445,31 +1709,45 @@ export default function Home({ navigation }: Props) {
                 </View>
                 <Text style={styles.onboardingTitle}>{s.title}</Text>
                 <Text style={styles.onboardingText}>{s.text}</Text>
+                
+                {/* Slide indicator */}
+                <Text style={{ color: activeTheme.textMuted, fontSize: 12, marginTop: 8 }}>
+                  {i + 1}/{CAROUSEL_SLIDES.length}
+                </Text>
 
                 <AnimatedButton
                   onPress={() => {
-                    if (i === 0) {
-                      if (navigation) {
-                        navigation.navigate("Pairing");
+                    try {
+                      if (i === 0) {
+                        // Track & Train - Pair Now
+                        if (navigation) {
+                          navigation.navigate("Pairing");
+                        } else {
+                          router.push("/pairing");
+                        }
+                      } else if (i === 1) {
+                        // Smart Device - Learn More
+                        Alert.alert(
+                          "Dual Devices",
+                          "Learn more about connecting two devices"
+                        );
                       } else {
-                        router.push("/pairing");
+                        // BondAI Chat - Navigate to BondAI
+                        if (navigation) {
+                          navigation.navigate("BondAI");
+                        } else {
+                          router.push("/bondai");
+                        }
                       }
-                    } else if (i === 1)
-                      Alert.alert(
-                        "Dual Devices",
-                        "Learn more about connecting two devices"
-                      );
-                    else {
-                      if (navigation) {
-                        navigation.navigate("BondAI");
-                      } else {
-                        router.push("/(tabs)/bondai");
-                      }
+                    } catch (err) {
+                      console.error("Navigation error:", err);
+                      Alert.alert("Error", "Could not navigate. Please try again.");
                     }
                   }}
                   style={{ marginTop: 12 }}
                 >
                   <View
+                    collapsable={false}
                     style={{
                       backgroundColor: activeTheme.primary,
                       paddingHorizontal: 16,
@@ -1509,150 +1787,208 @@ export default function Home({ navigation }: Props) {
           </View>
         </LinearGradient>
 
-        {/* Bond Score Rings - 3 separate circles */}
-        <View
-          style={{
-            marginTop: 18,
-            gap: 22,
-            alignItems: "center",
-            marginBottom: 20,
-          }}
-        >
-          {ThreeRingDisplay}
-        </View>
-
-        {/* Quick Training / Wellness CTA */}
+        {/* Quick Training Session */}
         <View style={{ marginTop: 8 }}>
           <Text
             style={{
               fontWeight: "800",
               color: activeTheme.textDark,
               marginBottom: 10,
+              fontSize: 18,
             }}
           >
-            Quick Training
+            Training Session
           </Text>
+          
+          {/* Device Connection Status */}
           <View style={styles.deviceStatusRow}>
-            <Text
-              style={{
-                color: dogOnline ? activeTheme.primary : activeTheme.textMuted,
-                fontSize: 12,
-              }}
-            >
-              Collar {dogOnline ? "connected" : "not connected"}
-            </Text>
-            <Text
-              style={{
-                color: vestOnline ? activeTheme.primary : activeTheme.textMuted,
-                fontSize: 12,
-              }}
-            >
-              Vest {vestOnline ? "connected" : "not connected"}
-            </Text>
-          </View>
-          <View style={styles.trainingRow}>
-            <TouchableOpacity
-              onPress={() => (isTraining ? stopTraining() : startTraining())}
-              disabled={!dogOnline || !vestOnline}
-              style={[
-                styles.trainingBtn,
-                {
-                  backgroundColor: isTraining
-                    ? activeTheme.orange
-                    : activeTheme.primary,
-                  opacity: dogOnline && vestOnline ? 1 : 0.5,
-                },
-              ]}
-            >
-              <Text style={{ color: activeTheme.textOnPrimary, fontWeight: "800" }}>
-                {isTraining ? "Stop Session" : "Start Session"}
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={() => sendComfort("dog", "gentle")}
-              disabled={!vestOnline}
-              style={[
-                styles.trainingBtn,
-                {
-                  backgroundColor: activeTheme.card,
-                  borderWidth: 1,
-                  borderColor: activeTheme.border,
-                  opacity: vestOnline ? 1 : 0.5,
-                },
-              ]}
-            >
-              <Text style={{ color: activeTheme.textDark }}>Comfort Dog</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={() => sendComfort("human", "pulse")}
-              disabled={!vestOnline}
-              style={[
-                styles.trainingBtn,
-                {
-                  backgroundColor: activeTheme.card,
-                  borderWidth: 1,
-                  borderColor: activeTheme.border,
-                  opacity: vestOnline ? 1 : 0.5,
-                },
-              ]}
-            >
-              <Text style={{ color: activeTheme.textDark }}>Comfort Human</Text>
-            </TouchableOpacity>
-          </View>
-          <Text style={{ color: activeTheme.textMuted, marginTop: 6, fontSize: 12 }}>
-            Comfort signals trigger the vest red light and gentle vibration for ~30 seconds.
-          </Text>
-
-          <View style={{ marginTop: 12 }}>
-            <Text style={{ color: activeTheme.textMuted, marginBottom: 8 }}>
-              Recent Sessions
-            </Text>
-            {(sessions || []).slice(0, 3).map((s: any, idx: number) => (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
               <View
-                key={s.id ?? idx}
                 style={{
-                  backgroundColor: activeTheme.card,
-                  borderRadius: 10,
-                  padding: 12,
-                  marginBottom: 8,
+                  width: 8,
+                  height: 8,
+                  borderRadius: 4,
+                  backgroundColor: dogOnline ? activeTheme.primary : activeTheme.textMuted,
+                }}
+              />
+              <Text
+                style={{
+                  color: dogOnline ? activeTheme.primary : activeTheme.textMuted,
+                  fontSize: 13,
+                  fontWeight: "600",
                 }}
               >
-                <View
-                  style={{
-                    flexDirection: "row",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                  }}
-                >
-                  <Text
-                    style={{ fontWeight: "800", color: activeTheme.textDark }}
-                  >
-                    {s.notes ?? "Session"}
-                  </Text>
-                  <Text style={{ color: activeTheme.textMuted, fontSize: 12 }}>
-                    {s.durationMin ? `${s.durationMin}m` : "—"}
-                  </Text>
-                </View>
-                <Text
-                  style={{
-                    color: activeTheme.textMuted,
-                    fontSize: 12,
-                    marginTop: 6,
-                  }}
-                >
-                  {new Date(s.date ?? Date.now()).toLocaleString()}
-                </Text>
-              </View>
-            ))}
+                Collar {dogOnline ? "Connected" : "Not Connected"}
+              </Text>
+            </View>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <View
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: 4,
+                  backgroundColor: vestOnline ? activeTheme.primary : activeTheme.textMuted,
+                }}
+              />
+              <Text
+                style={{
+                  color: vestOnline ? activeTheme.primary : activeTheme.textMuted,
+                  fontSize: 13,
+                  fontWeight: "600",
+                }}
+              >
+                Vest {vestOnline ? "Connected" : "Not Connected"}
+              </Text>
+            </View>
+          </View>
 
-            {!sessions || sessions.length === 0 ? (
-              <Text style={{ color: activeTheme.textMuted }}>
-                No sessions yet — start one to see recommendations.
+          {/* Start/Stop Session Button */}
+          <TouchableOpacity
+            onPress={() => (isTraining ? stopTraining() : startTraining())}
+            disabled={!dogOnline || !vestOnline}
+            style={[
+              {
+                backgroundColor: isTraining
+                  ? activeTheme.orange
+                  : activeTheme.primary,
+                paddingVertical: 14,
+                paddingHorizontal: 20,
+                borderRadius: 12,
+                alignItems: "center",
+                justifyContent: "center",
+                marginTop: 12,
+                opacity: dogOnline && vestOnline ? 1 : 0.5,
+                shadowColor: isTraining ? activeTheme.orange : activeTheme.primary,
+                shadowOpacity: 0.3,
+                shadowRadius: 8,
+                shadowOffset: { width: 0, height: 4 },
+                elevation: 4,
+              },
+            ]}
+          >
+            <Text style={{ color: activeTheme.textOnPrimary, fontWeight: "800", fontSize: 16 }}>
+              {isTraining ? "⏹ Stop Session" : "▶ Start Session"}
+            </Text>
+            {!dogOnline || !vestOnline ? (
+              <Text style={{ color: activeTheme.textOnPrimary, fontSize: 11, marginTop: 4, opacity: 0.8 }}>
+                Connect devices to start
               </Text>
             ) : null}
-          </View>
+          </TouchableOpacity>
+
+          {/* Comfort Signals */}
+          {isTraining && (
+            <View style={{ marginTop: 16 }}>
+              <Text
+                style={{
+                  color: activeTheme.textMuted,
+                  fontSize: 13,
+                  fontWeight: "600",
+                  marginBottom: 10,
+                }}
+              >
+                Comfort Signals
+              </Text>
+              <View style={{ flexDirection: "row", gap: 10 }}>
+                <TouchableOpacity
+                  onPress={() => sendComfort("dog", "gentle")}
+                  disabled={!vestOnline}
+                  style={[
+                    {
+                      flex: 1,
+                      backgroundColor: activeTheme.card,
+                      borderWidth: 1,
+                      borderColor: activeTheme.border,
+                      paddingVertical: 12,
+                      paddingHorizontal: 16,
+                      borderRadius: 10,
+                      alignItems: "center",
+                      opacity: vestOnline ? 1 : 0.5,
+                    },
+                  ]}
+                >
+                  <Text style={{ color: activeTheme.textDark, fontWeight: "600", fontSize: 14 }}>
+                    🐕 Comfort Dog
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => sendComfort("human", "pulse")}
+                  disabled={!vestOnline}
+                  style={[
+                    {
+                      flex: 1,
+                      backgroundColor: activeTheme.card,
+                      borderWidth: 1,
+                      borderColor: activeTheme.border,
+                      paddingVertical: 12,
+                      paddingHorizontal: 16,
+                      borderRadius: 10,
+                      alignItems: "center",
+                      opacity: vestOnline ? 1 : 0.5,
+                    },
+                  ]}
+                >
+                  <Text style={{ color: activeTheme.textDark, fontWeight: "600", fontSize: 14 }}>
+                    👤 Comfort Human
+                  </Text>
+                </TouchableOpacity>
+              </View>
+              <Text style={{ color: activeTheme.textMuted, marginTop: 8, fontSize: 11 }}>
+                Sends red light and gentle vibration to the vest for 30 seconds
+              </Text>
+            </View>
+          )}
+        </View>
+
+        {/* Analytics Section */}
+        <View style={{ marginTop: 24 }}>
+          <TouchableOpacity
+            onPress={() => {
+              try {
+                if (navigation) {
+                  navigation.navigate("Analytics");
+                } else {
+                  router.push("/analytics");
+                }
+              } catch (err: any) {
+                console.error("Navigation error:", err);
+              }
+            }}
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-between",
+              backgroundColor: activeTheme.glassBackground || activeTheme.card,
+              borderWidth: 1,
+              borderColor: activeTheme.border,
+              paddingVertical: 14,
+              paddingHorizontal: 18,
+              borderRadius: 12,
+            }}
+          >
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+              <MaterialIcons
+                name="analytics"
+                size={24}
+                color={activeTheme.primary}
+              />
+              <Text
+                style={{
+                  fontSize: 16,
+                  fontWeight: "700",
+                  color: activeTheme.textDark,
+                }}
+              >
+                Analytics & Progress
+              </Text>
+            </View>
+            <MaterialIcons
+              name="chevron-right"
+              size={24}
+              color={activeTheme.textMuted}
+            />
+          </TouchableOpacity>
         </View>
 
         {/* Footer */}
@@ -1676,6 +2012,13 @@ export default function Home({ navigation }: Props) {
         onClose={() => setDeviceModalOpen(false)}
         state={deviceState}
         theme={activeTheme}
+      />
+
+      {/* Onboarding Tutorial */}
+      <OnboardingTutorial
+        steps={TUTORIAL_STEPS}
+        visible={showOnboarding}
+        onComplete={completeOnboarding}
       />
     </SafeAreaView>
   );

@@ -185,6 +185,7 @@ export type Theme = {
   alert: string;
   success: string;
   buttonRadius: number;
+  red: string;
 };
 
 export const darkTheme: Theme = {
@@ -211,11 +212,14 @@ export const darkTheme: Theme = {
   green: COLORS.success,
   orange: COLORS.error,
   purple: COLORS.secondary,
+  red: COLORS.error,
   gradient: [
     "rgba(0, 240, 255, 0.25)",
     "rgba(112, 0, 255, 0.20)",
     "rgba(217, 0, 255, 0.15)",
     "rgba(0, 240, 255, 0.10)",
+    "rgba(217, 0, 255, 0.15)",
+    "rgba(0, 240, 255, 0.25)", // Closing the loop
   ],
   border: COLORS.border,
   borderStrong: COLORS.borderStrong,

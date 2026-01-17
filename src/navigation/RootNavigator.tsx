@@ -13,6 +13,7 @@ import Dashboard from "../screens/Dashboard";
 import Insights from "../screens/Insights";
 import Settings from "../screens/Settings";
 import BondAI from "../screens/BondAI"; // Chat-style AI screen
+import Analytics from "../screens/Analytics";
 
 const Stack = createNativeStackNavigator<any>();
 const Tabs = createBottomTabNavigator<any>();
@@ -90,6 +91,7 @@ export default function RootNavigator() {
       <Stack.Screen name="Main" component={MainTabs} />
       <Stack.Screen name="Pairing" component={Pairing} />
       <Stack.Screen name="Insights" component={Insights} />
+      <Stack.Screen name="Analytics" component={Analytics} />
     </Stack.Navigator>
   );
 }

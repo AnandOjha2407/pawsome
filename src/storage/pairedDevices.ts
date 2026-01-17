@@ -16,7 +16,19 @@ type SettingsShape = {
 async function readSettings(): Promise<SettingsShape> {
   try {
     const raw = await AsyncStorage.getItem(SETTINGS_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : {};
+    if (!raw) return {};
+    try {
+      const parsed = JSON.parse(raw);
+      // Safety check: ensure parsed is an object
+      if (parsed && typeof parsed === "object") {
+        return parsed;
+      }
+      return {};
+    } catch (parseError) {
+      // If JSON is corrupted, return empty object
+      console.warn("[pairedDevices] corrupted JSON, starting fresh", parseError);
+      return {};
+    }
   } catch (e) {
     console.warn("[pairedDevices] failed to read settings", e);
     return {};
