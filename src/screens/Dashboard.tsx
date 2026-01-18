@@ -171,7 +171,7 @@ export default function Dashboard({ navigation }: Props) {
   const [humanConnected, setHumanConnected] = useState(false);
 
   const [isTraining, setIsTraining] = useState(false);
-  
+
   // Therapy mode state
   const [currentTherapyMode, setCurrentTherapyMode] = useState<number | null>(null);
   const [intensity, setIntensity] = useState(128); // Default 50% (128/255)
@@ -294,7 +294,7 @@ export default function Dashboard({ navigation }: Props) {
     const onData = (data: any) => {
       // Safety: Check if component is still mounted before setState
       if (!isMountedRef.current) return;
-      
+
       try {
         if (!data || typeof data !== 'object') return;
 
@@ -304,20 +304,20 @@ export default function Dashboard({ navigation }: Props) {
             if (!isMountedRef.current) return prev; // Don't update if unmounted
             // Safety: Ensure prev exists
             const safePrev = prev || { heartRate: 0, steps: 0, battery: 0, spO2: 0, hr7: [0, 0, 0, 0, 0, 0, 0], steps7: [0, 0, 0, 0, 0, 0, 0] };
-            
+
             // Validate and update data from actual device
             const newHeartRate = (typeof data.heartRate === 'number' && data.heartRate > 0 && data.heartRate < 300) ? data.heartRate : safePrev.heartRate;
             const newBattery = (typeof data.battery === 'number' && data.battery >= 0 && data.battery <= 100) ? data.battery : safePrev.battery;
             const newSpO2 = (typeof data.spO2 === 'number' && data.spO2 >= 0 && data.spO2 <= 100) ? data.spO2 : safePrev.spO2;
-            
+
             return {
               ...safePrev,
               heartRate: newHeartRate,
               steps: (typeof data.steps === 'number' && data.steps >= 0) ? data.steps : safePrev.steps,
               battery: newBattery,
               spO2: newSpO2,
-              hr7: Array.isArray(data.hrHistory) && data.hrHistory.length > 0 
-                ? data.hrHistory.slice(0, 7) 
+              hr7: Array.isArray(data.hrHistory) && data.hrHistory.length > 0
+                ? data.hrHistory.slice(0, 7)
                 : (Array.isArray(safePrev.hr7) ? safePrev.hr7 : [0, 0, 0, 0, 0, 0, 0]),
             };
           });
@@ -329,12 +329,12 @@ export default function Dashboard({ navigation }: Props) {
             if (!isMountedRef.current) return prev; // Don't update if unmounted
             // Safety: Ensure prev exists
             const safePrev = prev || { heartRate: 0, battery: 0, strain: 0 };
-            
+
             // Validate and update data from actual device
             const newHeartRate = (typeof data.heartRate === 'number' && data.heartRate > 0 && data.heartRate < 300) ? data.heartRate : safePrev.heartRate;
             const newBattery = (typeof data.battery === 'number' && data.battery >= 0 && data.battery <= 100) ? data.battery : safePrev.battery;
             const newStrain = (typeof data.strainScore === 'number' && data.strainScore >= 0 && data.strainScore <= 100) ? data.strainScore : safePrev.strain;
-            
+
             return {
               ...safePrev,
               heartRate: newHeartRate,
@@ -345,15 +345,18 @@ export default function Dashboard({ navigation }: Props) {
         }
 
         if (data.profile === "vest") {
+          console.log(`[Dashboard] Received vest data:`, JSON.stringify(data));
           setVestConnected(true);
           setVestData((prev) => {
             if (!isMountedRef.current) return prev; // Don't update if unmounted
             // Safety: Ensure prev exists
             const safePrev = prev || { battery: 0 };
-            
+
             // Validate and update battery from vest
             const newBattery = (typeof data.battery === 'number' && data.battery >= 0 && data.battery <= 100) ? data.battery : safePrev.battery;
-            
+
+            console.log(`[Dashboard] Vest battery update: ${safePrev.battery} -> ${newBattery}`);
+
             return {
               ...safePrev,
               battery: newBattery,
@@ -369,7 +372,7 @@ export default function Dashboard({ navigation }: Props) {
     const onConnections = (conns: any) => {
       // Safety: Check if component is still mounted before setState
       if (!isMountedRef.current) return;
-      
+
       try {
         if (conns && typeof conns === 'object' && conns.connected) {
           setCollarConnected(!!conns.connected.dog);
@@ -429,7 +432,7 @@ export default function Dashboard({ navigation }: Props) {
       setIsTraining(false); // Revert state on error
     }
   };
-  
+
   const stopTraining = () => {
     try {
       setIsTraining(false);
@@ -441,7 +444,7 @@ export default function Dashboard({ navigation }: Props) {
       setIsTraining(false); // Ensure state is updated
     }
   };
-  
+
   // Send therapy command
   const sendTherapyCommand = async (commandCode: number, name: string) => {
     try {
@@ -459,7 +462,7 @@ export default function Dashboard({ navigation }: Props) {
       }
 
       const success = await bleManager.sendTherapyCommand(commandCode);
-      
+
       if (success) {
         setCurrentTherapyMode(commandCode);
         // Don't show alert for every button press to avoid spam
@@ -478,7 +481,7 @@ export default function Dashboard({ navigation }: Props) {
     try {
       const newIntensity = Math.round(value);
       setIntensity(newIntensity);
-      
+
       if (!vestConnected) {
         console.warn("Vest not connected, intensity change not sent");
         return;
@@ -700,17 +703,17 @@ export default function Dashboard({ navigation }: Props) {
     };
 
     // Therapy button component
-    const TherapyButton = ({ 
-      code, 
-      name, 
-      icon, 
-      color, 
-      onPress 
-    }: { 
-      code: number; 
-      name: string; 
-      icon: string; 
-      color: string; 
+    const TherapyButton = ({
+      code,
+      name,
+      icon,
+      color,
+      onPress
+    }: {
+      code: number;
+      name: string;
+      icon: string;
+      color: string;
       onPress: () => void;
     }) => (
       <TouchableOpacity
@@ -784,17 +787,20 @@ export default function Dashboard({ navigation }: Props) {
         </View>
 
         {/* Vest Battery Display */}
-        {vestConnected && (
-          <View style={{ padding: 14, borderRadius: 12, backgroundColor: theme.card, borderWidth: 1, borderColor: theme.border }}>
-            <Text style={{ fontSize: 11, color: theme.textMuted, marginBottom: 6 }}>Vest Battery</Text>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-              <Text style={{ fontSize: 14 }}>🔋</Text>
-              <Text style={{ fontSize: 20, fontWeight: "800", color: theme.textDark }}>
-                {vestData.battery > 0 ? `${vestData.battery}%` : "--"}
+        <View style={{ padding: 14, borderRadius: 12, backgroundColor: theme.card, borderWidth: 1, borderColor: vestConnected ? "#22c55e" : theme.border }}>
+          <Text style={{ fontSize: 11, color: theme.textMuted, marginBottom: 6 }}>Vest Battery</Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <Text style={{ fontSize: 14 }}>🔋</Text>
+            <Text style={{ fontSize: 20, fontWeight: "800", color: vestConnected ? "#22c55e" : theme.textMuted }}>
+              {vestConnected && vestData.battery > 0 ? `${vestData.battery}%` : "--"}
+            </Text>
+            {!vestConnected && (
+              <Text style={{ fontSize: 10, color: theme.textMuted, marginLeft: 4 }}>
+                (Disconnected)
               </Text>
-            </View>
+            )}
           </View>
-        )}
+        </View>
 
         {/* Active Mode Banner */}
         {currentTherapyMode !== null && currentTherapyMode !== THERAPY.STOP && (

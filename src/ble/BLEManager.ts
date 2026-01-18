@@ -124,7 +124,7 @@ function detectDeviceType(
   // Check Polar H10 patterns (both human and dog use same name)
   // Return null so user can select role (Human or Dog)
   const isPolarH10 = DEVICE_NAME_PATTERNS.human.some(pattern => pattern.test(name)) ||
-                     DEVICE_NAME_PATTERNS.dog.some(pattern => pattern.test(name));
+    DEVICE_NAME_PATTERNS.dog.some(pattern => pattern.test(name));
   if (isPolarH10) {
     // User will select role when connecting
     return null;
@@ -163,14 +163,14 @@ class BLEManagerReal extends SimpleEmitter {
     respiratoryRate: number;
     battery: number;
     lastUpdate: number;
-  } = { 
-    heartRate: 0, 
-    spO2: 0, 
-    hrv: [], 
-    respiratoryRate: 0, 
-    battery: 0, 
-    lastUpdate: 0 
-  };
+  } = {
+      heartRate: 0,
+      spO2: 0,
+      hrv: [],
+      respiratoryRate: 0,
+      battery: 0,
+      lastUpdate: 0
+    };
 
   private dogData: {
     heartRate: number;
@@ -179,14 +179,14 @@ class BLEManagerReal extends SimpleEmitter {
     respiratoryRate: number;
     battery: number;
     lastUpdate: number;
-  } = { 
-    heartRate: 0, 
-    spO2: 0, 
-    hrv: [], 
-    respiratoryRate: 0, 
-    battery: 0, 
-    lastUpdate: 0 
-  };
+  } = {
+      heartRate: 0,
+      spO2: 0,
+      hrv: [],
+      respiratoryRate: 0,
+      battery: 0,
+      lastUpdate: 0
+    };
 
   private sessions: Session[] = [];
   private sessionStart = Date.now();
@@ -254,7 +254,7 @@ class BLEManagerReal extends SimpleEmitter {
       ]);
 
       // Check if all required permissions are granted
-      const allGranted = 
+      const allGranted =
         results["android.permission.BLUETOOTH_SCAN"] === PermissionsAndroid.RESULTS.GRANTED &&
         results["android.permission.BLUETOOTH_CONNECT"] === PermissionsAndroid.RESULTS.GRANTED &&
         results["android.permission.ACCESS_FINE_LOCATION"] === PermissionsAndroid.RESULTS.GRANTED;
@@ -321,34 +321,34 @@ class BLEManagerReal extends SimpleEmitter {
 
         try {
           const { id, name, rssi } = device;
-          
+
           // Get device service UUIDs (if available from scan response)
           const serviceUUIDs = device.serviceUUIDs || [];
           const serviceUUIDsLower = serviceUUIDs.map((uuid: string) => uuid.toLowerCase());
-          
+
           // Check if it's a PawsomeBond Vest by service UUID (future-proof for generic ESP32)
-          const isVestByService = serviceUUIDsLower.some((uuid: string) => 
+          const isVestByService = serviceUUIDsLower.some((uuid: string) =>
             uuid.includes('4fafc201') || uuid.includes(VEST_SERVICE_UUID.toLowerCase().substring(0, 8))
           );
-          
+
           // Check if it's a Polar H10 by service UUID
-          const isPolarByService = serviceUUIDsLower.some((uuid: string) => 
+          const isPolarByService = serviceUUIDsLower.some((uuid: string) =>
             uuid.includes('180d') || uuid.includes(HEART_RATE_SERVICE_UUID.toLowerCase().substring(0, 8))
           );
-          
+
           // Match by name pattern per NEW_REQUIREMENTS.md
           // Polar H10: name includes "Polar H10" (case-insensitive)
           // PAWSOMEBOND-VEST: exact name match "PAWSOMEBOND-VEST" (case-insensitive)
           const nameLower = name?.toLowerCase() || "";
-          const isPolarH10ByName = nameLower.includes("polar h10") || 
-                                   nameLower.includes("polar h 10");
+          const isPolarH10ByName = nameLower.includes("polar h10") ||
+            nameLower.includes("polar h 10");
           // CRITICAL: Exact match for "PAWSOMEBOND-VEST" (case-insensitive)
           const isVestByName = nameLower === "pawsomebond-vest";
-          
+
           // Combine service UUID and name matching
           const isPolarH10 = isPolarH10ByName || isPolarByService;
           const isVest = isVestByName || isVestByService;
-          
+
           if (!isPolarH10 && !isVest) {
             // Not one of our devices - skip it
             return; // Don't log every unknown device to reduce noise
@@ -356,13 +356,13 @@ class BLEManagerReal extends SimpleEmitter {
 
           // This is one of our devices - log and pass it to the callback
           const deviceType = isVest ? "vest" : null; // Polar H10 needs user to select role
-          const detectionMethod = isVest 
-            ? (isVestByName ? "by name" : "by service UUID") 
+          const detectionMethod = isVest
+            ? (isVestByName ? "by name" : "by service UUID")
             : (isPolarH10ByName ? "by name" : "by service UUID");
-          const label = isVest 
-            ? "PAWSOMEBOND-VEST (Therapy Vest)" 
+          const label = isVest
+            ? "PAWSOMEBOND-VEST (Therapy Vest)"
             : "Polar H10 (select role)";
-          
+
           this.log(`Found ${label} [${detectionMethod}]: ${name || 'Unknown'} (${id})`);
 
           onDeviceFound({
@@ -390,7 +390,7 @@ class BLEManagerReal extends SimpleEmitter {
       // Load paired devices
       const paired = await loadPairedDevices();
       this.pairedDescriptors = paired;
-      
+
       // Check if there are any paired devices
       const hasPairedDevices = paired.dog || paired.human || paired.vest;
       if (!hasPairedDevices) {
@@ -402,7 +402,7 @@ class BLEManagerReal extends SimpleEmitter {
 
       // Check if devices are already connected
       const connections = this.getConnections();
-      const allConnected = 
+      const allConnected =
         (paired.dog ? connections.connected.dog : true) &&
         (paired.human ? connections.connected.human : true) &&
         (paired.vest ? connections.connected.vest : true);
@@ -414,7 +414,7 @@ class BLEManagerReal extends SimpleEmitter {
 
       // Start scanning for paired devices
       this.log("Starting auto-connect scan for paired devices...");
-      
+
       const connectedDevices = new Set<string>();
       const scanTimeout = 15000; // 15 seconds timeout
       let scanTimer: NodeJS.Timeout | null = null;
@@ -439,7 +439,7 @@ class BLEManagerReal extends SimpleEmitter {
         try {
           // Check if this device matches any paired device by ID (not MAC)
           const deviceId = device.id;
-          
+
           let matchedRole: Role | null = null;
           let matchedDescriptor: DeviceDescriptor | null = null;
 
@@ -476,7 +476,7 @@ class BLEManagerReal extends SimpleEmitter {
 
             // Check if all devices are now connected
             const currentConnections = this.getConnections();
-            const allNowConnected = 
+            const allNowConnected =
               (paired.dog ? currentConnections.connected.dog : true) &&
               (paired.human ? currentConnections.connected.human : true) &&
               (paired.vest ? currentConnections.connected.vest : true);
@@ -668,17 +668,17 @@ class BLEManagerReal extends SimpleEmitter {
           // Add timeout to prevent hanging on service discovery
           try {
             const discoverPromise = device.discoverAllServicesAndCharacteristics();
-            const timeoutPromise = new Promise((_, reject) => 
+            const timeoutPromise = new Promise((_, reject) =>
               setTimeout(() => reject(new Error("Service discovery timeout")), 10000)
             );
-            
+
             await Promise.race([discoverPromise, timeoutPromise]);
             this.log(`Service discovery completed for ${role}`);
           } catch (discoverTimeoutError: any) {
             this.log(`Service discovery timed out or failed (continuing anyway): ${discoverTimeoutError?.message ?? discoverTimeoutError}`);
             // Continue - some devices work without full discovery
           }
-          
+
           // Try to read device name if not available (non-blocking)
           if (!descriptor.name) {
             try {
@@ -686,10 +686,10 @@ class BLEManagerReal extends SimpleEmitter {
                 "00001800-0000-1000-8000-00805f9b34fb", // Generic Access Service
                 "00002a00-0000-1000-8000-00805f9b34fb"  // Device Name characteristic
               );
-              const nameTimeout = new Promise((_, reject) => 
+              const nameTimeout = new Promise((_, reject) =>
                 setTimeout(() => reject(new Error("Name read timeout")), 3000)
               );
-              
+
               const deviceInfo = await Promise.race([namePromise, nameTimeout]) as any;
               if (deviceInfo?.value) {
                 const name = Buffer.from(deviceInfo.value, "base64").toString("utf8");
@@ -744,22 +744,22 @@ class BLEManagerReal extends SimpleEmitter {
         try {
           // Subscribe to heart rate data
           await this.subscribePolarH10(device, role);
-          
+
           // Read battery level from Battery Service immediately (non-blocking)
           this.readBatteryLevel(device, role).catch((batteryError: any) => {
             this.log(`Warning: Failed to read initial battery for ${role}: ${batteryError?.message ?? batteryError}`);
             // Non-critical - continue
           });
-          
+
           // Set up periodic battery reads (only once)
           if (!this.batteryReadInterval) {
             this.batteryReadInterval = setInterval(() => {
               try {
-                // Read battery for all connected Polar devices
+                // Read battery for all connected devices (including vest)
                 Object.entries(this.devices).forEach(async ([deviceRole, dev]) => {
                   try {
-                    if (dev && (deviceRole === "human" || deviceRole === "dog")) {
-                      await this.readBatteryLevel(dev, deviceRole as "human" | "dog");
+                    if (dev && (deviceRole === "human" || deviceRole === "dog" || deviceRole === "vest")) {
+                      await this.readBatteryLevel(dev, deviceRole as "human" | "dog" | "vest");
                     }
                   } catch (batteryReadError: any) {
                     this.log(`Error reading battery for ${deviceRole}: ${batteryReadError?.message ?? batteryReadError}`);
@@ -781,11 +781,11 @@ class BLEManagerReal extends SimpleEmitter {
         // CRITICAL FIX: Vest is output-only device - DO NOT subscribe to notifications
         // Only write commands, never monitor characteristics
         this.log(`Vest connected (output-only, no subscriptions needed)`);
-        
+
         // CRITICAL: Vest connection should NOT fail if status subscription fails
         // The vest is primarily an output device - we send commands to it
         // Status subscription is optional and should never crash the connection
-        
+
         // Verify vest service exists before attempting subscription (optional)
         // Vest works fine without status subscription - it's output-only
         try {
@@ -798,20 +798,20 @@ class BLEManagerReal extends SimpleEmitter {
             try {
               // Add timeout to prevent hanging on service discovery
               const servicePromise = device.services();
-              const timeoutPromise = new Promise((_, reject) => 
+              const timeoutPromise = new Promise((_, reject) =>
                 setTimeout(() => reject(new Error("Service discovery timeout")), 5000)
               );
-              
+
               const services = await Promise.race([servicePromise, timeoutPromise]) as any[];
               const vestService = services?.find(s => s.uuid.toLowerCase() === VEST_SERVICE_UUID.toLowerCase());
-              
+
               if (vestService) {
                 // Service exists - optionally subscribe to status (non-critical)
                 // Wrap in try-catch to prevent any crash
                 try {
                   await Promise.race([
                     this.subscribeVestStatus(device),
-                    new Promise((_, reject) => 
+                    new Promise((_, reject) =>
                       setTimeout(() => reject(new Error("Status subscription timeout")), 3000)
                     )
                   ]).catch((statusError: any) => {
@@ -833,6 +833,35 @@ class BLEManagerReal extends SimpleEmitter {
               this.log(`Info: Could not read vest services (this is OK): ${serviceError?.message ?? serviceError}`);
               // Non-critical - connection still succeeds, vest can send commands
             }
+
+            // Try to read initial battery level from standard Battery Service (0x180F)
+            // ESP32 devices can expose this service for battery monitoring
+            this.readBatteryLevel(device, "vest").catch((batteryError: any) => {
+              this.log(`Info: Could not read initial vest battery (non-critical): ${batteryError?.message ?? batteryError}`);
+              // Non-critical - vest works without battery level
+            });
+
+            // Start periodic battery reads if not already started
+            if (!this.batteryReadInterval) {
+              this.batteryReadInterval = setInterval(() => {
+                try {
+                  // Read battery for all connected devices (including vest)
+                  Object.entries(this.devices).forEach(async ([deviceRole, dev]) => {
+                    try {
+                      if (dev && (deviceRole === "human" || deviceRole === "dog" || deviceRole === "vest")) {
+                        await this.readBatteryLevel(dev, deviceRole as "human" | "dog" | "vest");
+                      }
+                    } catch (batteryReadError: any) {
+                      this.log(`Error reading battery for ${deviceRole}: ${batteryReadError?.message ?? batteryReadError}`);
+                      // Don't crash - just log
+                    }
+                  });
+                } catch (intervalError: any) {
+                  this.log(`Error in battery read interval: ${intervalError?.message ?? intervalError}`);
+                  // Don't crash - just log
+                }
+              }, this.BATTERY_READ_INTERVAL_MS);
+            }
           }
         } catch (verifyError: any) {
           // Connection verification failed - but connection might still work
@@ -847,13 +876,13 @@ class BLEManagerReal extends SimpleEmitter {
         const disconnectSub = device.onDisconnected((error) => {
           try {
             this.log(`Device disconnected: ${role} - ${error?.message ?? "No error"}`);
-            
+
             // CRITICAL: Clean up subscriptions ONLY for this specific device
             const deviceId = device.id;
-            
+
             // Get subscriptions for this specific device
             const deviceSubs = this.deviceSubscriptions.get(deviceId) || [];
-            
+
             // Remove subscriptions for this device
             deviceSubs.forEach(sub => {
               try {
@@ -864,36 +893,36 @@ class BLEManagerReal extends SimpleEmitter {
                 // Ignore - subscription might already be removed or device is disconnected
               }
             });
-            
+
             // Remove device from subscriptions map
             this.deviceSubscriptions.delete(deviceId);
-            
+
             // Remove disconnect subscription from main subscriptions array
             const mainIndex = this.subscriptions.indexOf(disconnectSub);
             if (mainIndex !== -1) {
               this.subscriptions.splice(mainIndex, 1);
             }
-            
+
             // Clean up device reference
             if (this.devices[role]) {
               delete this.devices[role];
             }
             delete this.roles[deviceId];
-            
+
             // Reset connection state
             this.connectedRoles[role] = false;
             if (role === "vest") {
               this.comfortStatus = "idle";
               this.stopBondSyncMode(); // Stop Bond Sync if vest disconnects
             }
-            
+
             // Update isConnected flag if no devices are connected
             const hasAnyConnection = Object.values(this.connectedRoles).some(connected => connected);
             if (!hasAnyConnection) {
               this.isConnected = false;
               this.connectedDevice = null;
             }
-            
+
             this.emitConnections();
             this.emit("disconnected", { role, deviceId });
           } catch (disconnectError: any) {
@@ -910,7 +939,7 @@ class BLEManagerReal extends SimpleEmitter {
             }
           }
         });
-        
+
         // CRITICAL: Store disconnect subscription for cleanup to prevent memory leaks
         if (disconnectSub) {
           const deviceId = device.id;
@@ -928,7 +957,7 @@ class BLEManagerReal extends SimpleEmitter {
       // Mark as connected BEFORE emitting events (for vest, connection succeeds even if status sub fails)
       this.isConnected = true;
       this.connectedRoles[role] = true;
-      
+
       // Update connected device info
       this.connectedDevice = {
         name: descriptor.name ?? `${role.toUpperCase()} Device`,
@@ -947,13 +976,13 @@ class BLEManagerReal extends SimpleEmitter {
       this.log(`✓ Successfully connected to ${descriptor.name ?? descriptor.id} as ${role}`);
     } catch (e: any) {
       this.log("Connect error: " + String(e?.message ?? e));
-      
+
       // Reset connection state on error
       this.connectedRoles[role] = false;
       if (this.devices[role]) {
         delete this.devices[role];
       }
-      
+
       this.emit("error", e);
       throw e; // Re-throw so caller knows connection failed
     }
@@ -991,7 +1020,7 @@ class BLEManagerReal extends SimpleEmitter {
       this.log(`Cannot subscribe to ${role} device - device is null`);
       return;
     }
-    
+
     try {
       const isConnected = await device.isConnected();
       if (!isConnected) {
@@ -1041,39 +1070,39 @@ class BLEManagerReal extends SimpleEmitter {
               if (!data || data.length === 0) {
                 return;
               }
-              
+
               // Parse Heart Rate data using PolarParser
               const parsed = parseHeartRate(data);
-              
+
               if (parsed) {
                 const previousData = (this as any)[previousDataKey] || {};
                 const realTimeData = polarToRealTimeData(parsed, previousData);
-                
+
                 if (realTimeData) {
                   // Update stored data
                   (this as any)[previousDataKey] = realTimeData;
-                  
+
                   const targetData = role === "human" ? this.humanData : this.dogData;
-                  
+
                   // Safety: Ensure targetData exists
                   if (!targetData) {
                     this.log(`Warning: targetData is null for ${role}`);
                     return;
                   }
-                  
+
                   // Update values from parsed data with safety checks
-                  if (realTimeData.heart_rate !== undefined && 
-                      typeof realTimeData.heart_rate === 'number' && 
-                      realTimeData.heart_rate > 0 && 
-                      realTimeData.heart_rate < 300) {
+                  if (realTimeData.heart_rate !== undefined &&
+                    typeof realTimeData.heart_rate === 'number' &&
+                    realTimeData.heart_rate > 0 &&
+                    realTimeData.heart_rate < 300) {
                     targetData.heartRate = realTimeData.heart_rate;
                   }
-                  
+
                   // HRV is calculated from RR intervals in parseHeartRate
-                  if (realTimeData.hrv !== undefined && 
-                      typeof realTimeData.hrv === 'number' && 
-                      realTimeData.hrv > 0 && 
-                      realTimeData.hrv < 1000) {
+                  if (realTimeData.hrv !== undefined &&
+                    typeof realTimeData.hrv === 'number' &&
+                    realTimeData.hrv > 0 &&
+                    realTimeData.hrv < 1000) {
                     // Ensure hrv array exists
                     if (!Array.isArray(targetData.hrv)) {
                       targetData.hrv = [];
@@ -1082,20 +1111,20 @@ class BLEManagerReal extends SimpleEmitter {
                     targetData.hrv.push(realTimeData.hrv);
                     if (targetData.hrv.length > 64) targetData.hrv.shift();
                   }
-                  
+
                   // Polar H10 doesn't provide SpO2 or battery via HR service
                   // SpO2 remains 0 (not available from Polar H10)
                   // Battery would need to be read from a different service if available
-                  
+
                   targetData.lastUpdate = Date.now();
-                  
+
                   // Safety: Only emit if we have valid data
                   try {
                     this.emitDeviceData(role);
                   } catch (emitError: any) {
                     this.log(`Error emitting device data [${role}]: ${emitError?.message ?? emitError}`);
                   }
-                  
+
                   this.log(`Polar H10 data [${role}]: HR=${parsed.heartRate}, HRV=${realTimeData.hrv ?? 'N/A'}, Contact=${parsed.hasContact}`);
                 }
               } else {
@@ -1117,7 +1146,7 @@ class BLEManagerReal extends SimpleEmitter {
           }
         }
       );
-      
+
       // CRITICAL: Store subscription for cleanup to prevent memory leaks
       if (subscription) {
         const deviceId = device.id;
@@ -1140,7 +1169,7 @@ class BLEManagerReal extends SimpleEmitter {
   // ----------------------------------------------------------
   // READ BATTERY LEVEL FROM BATTERY SERVICE
   // ----------------------------------------------------------
-  private async readBatteryLevel(device: Device, role: "human" | "dog"): Promise<void> {
+  private async readBatteryLevel(device: Device, role: "human" | "dog" | "vest"): Promise<void> {
     try {
       const isConnected = await device.isConnected();
       if (!isConnected) {
@@ -1158,16 +1187,25 @@ class BLEManagerReal extends SimpleEmitter {
         const batteryData = Buffer.from(batteryChar.value, "base64");
         if (batteryData.length > 0) {
           const batteryLevel = batteryData[0]; // Battery level is 0-100%
-          
+
           // Validate battery level
           if (batteryLevel >= 0 && batteryLevel <= 100) {
-            const targetData = role === "human" ? this.humanData : this.dogData;
-            if (targetData) {
-              targetData.battery = batteryLevel;
-              this.log(`Read battery level for ${role}: ${batteryLevel}%`);
-              
-              // Emit updated data with battery
-              this.emitDeviceData(role);
+            if (role === "vest") {
+              // Emit vest battery data
+              this.log(`Read battery level for vest: ${batteryLevel}%`);
+              this.emit("data", {
+                profile: "vest",
+                battery: batteryLevel,
+              });
+            } else {
+              const targetData = role === "human" ? this.humanData : this.dogData;
+              if (targetData) {
+                targetData.battery = batteryLevel;
+                this.log(`Read battery level for ${role}: ${batteryLevel}%`);
+
+                // Emit updated data with battery
+                this.emitDeviceData(role);
+              }
             }
           }
         }
@@ -1216,7 +1254,7 @@ class BLEManagerReal extends SimpleEmitter {
   private emitDeviceData(role: "human" | "dog") {
     try {
       const data = role === "human" ? this.humanData : this.dogData;
-      
+
       // Safety: Ensure data exists
       if (!data) {
         this.log(`Warning: ${role} data is null, cannot emit`);
@@ -1225,8 +1263,8 @@ class BLEManagerReal extends SimpleEmitter {
 
       // Safety: Ensure hrv array exists and is valid
       const hrvArray = Array.isArray(data.hrv) ? data.hrv : [];
-      const latestHRV = hrvArray.length > 0 && typeof hrvArray[hrvArray.length - 1] === 'number' 
-        ? hrvArray[hrvArray.length - 1] 
+      const latestHRV = hrvArray.length > 0 && typeof hrvArray[hrvArray.length - 1] === 'number'
+        ? hrvArray[hrvArray.length - 1]
         : 0;
 
       // Calculate stress from HRV
@@ -1323,7 +1361,7 @@ class BLEManagerReal extends SimpleEmitter {
       // Convert number to base64 (BLE requires this)
       const bytes = new Uint8Array([commandCode]);
       const base64 = Buffer.from(bytes).toString('base64');
-      
+
       // Write to vest
       try {
         await vest.writeCharacteristicWithResponseForService(
@@ -1331,13 +1369,13 @@ class BLEManagerReal extends SimpleEmitter {
           VEST_COMMAND_UUID,
           base64
         );
-        
+
         const cmdName = Object.keys(THERAPY).find(k => THERAPY[k as keyof typeof THERAPY] === commandCode) ?? 'UNKNOWN';
         this.log(`✓ Sent therapy command: 0x${commandCode.toString(16).padStart(2, '0')} (${cmdName})`);
-        
+
         // Emit therapy mode change event
         this.emit("therapy_mode_changed", { mode: commandCode, name: cmdName });
-        
+
         return true;
       } catch (writeError: any) {
         // Fallback: Try without response
@@ -1349,10 +1387,10 @@ class BLEManagerReal extends SimpleEmitter {
           );
           const cmdName = Object.keys(THERAPY).find(k => THERAPY[k as keyof typeof THERAPY] === commandCode) ?? 'UNKNOWN';
           this.log(`✓ Sent therapy command (no response): 0x${commandCode.toString(16).padStart(2, '0')} (${cmdName})`);
-          
+
           // Emit therapy mode change event
           this.emit("therapy_mode_changed", { mode: commandCode, name: cmdName });
-          
+
           return true;
         } catch (fallbackError: any) {
           const error = new Error(`Both write methods failed: ${writeError?.message ?? writeError}`);
@@ -1404,7 +1442,7 @@ class BLEManagerReal extends SimpleEmitter {
       // Convert BPM to base64 (BLE requires this)
       const bytes = new Uint8Array([Math.round(bpm)]);
       const base64 = Buffer.from(bytes).toString('base64');
-      
+
       // Write to vest heartbeat characteristic
       try {
         await vest.writeCharacteristicWithResponseForService(
@@ -1445,7 +1483,7 @@ class BLEManagerReal extends SimpleEmitter {
     try {
       // Validate intensity (per requirements: range 50-255, but we allow 0-255)
       const clampedIntensity = Math.max(0, Math.min(255, Math.round(intensity)));
-      
+
       const vest = this.devices.vest;
       if (!vest) {
         const error = new Error("Vest not connected");
@@ -1470,7 +1508,7 @@ class BLEManagerReal extends SimpleEmitter {
       // Convert intensity to base64
       const bytes = new Uint8Array([clampedIntensity]);
       const base64 = Buffer.from(bytes).toString('base64');
-      
+
       // Write to vest intensity characteristic
       try {
         await vest.writeCharacteristicWithResponseForService(
@@ -1544,7 +1582,7 @@ class BLEManagerReal extends SimpleEmitter {
           this.log(`Failed to write vest command: ${error.message}`);
           throw error;
         }
-        
+
         const characteristics = await vestService.characteristics();
         const commandChar = characteristics.find(c => c.uuid.toLowerCase() === VEST_COMMAND_UUID.toLowerCase());
         if (!commandChar) {
@@ -1552,7 +1590,7 @@ class BLEManagerReal extends SimpleEmitter {
           this.log(`Failed to write vest command: ${error.message}`);
           throw error;
         }
-        
+
         this.log(`Vest service and characteristic found. Service: ${vestService.uuid}, Char: ${commandChar.uuid}`);
       } catch (discoveryError: any) {
         this.log(`Warning: Could not verify service/characteristic: ${discoveryError?.message ?? discoveryError}`);
@@ -1561,10 +1599,10 @@ class BLEManagerReal extends SimpleEmitter {
 
       const data = new Uint8Array([commandCode]);
       const b64 = Buffer.from(data).toString("base64");
-      
+
       const cmdName = Object.keys(THERAPY).find(k => THERAPY[k as keyof typeof THERAPY] === commandCode) ?? 'UNKNOWN';
       this.log(`Attempting to send vest command: 0x${commandCode.toString(16).padStart(2, '0')} (${cmdName}), base64: ${b64}, raw bytes: [${commandCode}]`);
-      
+
       // Try withResponse first (preferred method)
       try {
         await vest.writeCharacteristicWithResponseForService(
@@ -1576,7 +1614,7 @@ class BLEManagerReal extends SimpleEmitter {
         return;
       } catch (withResponseError: any) {
         this.log(`writeCharacteristicWithResponseForService failed: ${withResponseError?.message ?? withResponseError}. Trying withoutResponse...`);
-        
+
         // Fallback: Try withoutResponse (some ESP32 devices prefer this)
         try {
           await vest.writeCharacteristicWithoutResponseForService(
@@ -1633,7 +1671,7 @@ class BLEManagerReal extends SimpleEmitter {
       let isConnected = false;
       try {
         const connectCheckPromise = device.isConnected();
-        const connectTimeout = new Promise((_, reject) => 
+        const connectTimeout = new Promise((_, reject) =>
           setTimeout(() => reject(new Error("Connection check timeout")), 2000)
         );
         isConnected = await Promise.race([connectCheckPromise, connectTimeout]) as boolean;
@@ -1641,7 +1679,7 @@ class BLEManagerReal extends SimpleEmitter {
         this.log(`Vest connection check failed (skipping status subscription): ${connectError?.message ?? connectError}`);
         return;
       }
-      
+
       if (!isConnected) {
         this.log("Vest not connected, cannot subscribe to status");
         return;
@@ -1651,7 +1689,7 @@ class BLEManagerReal extends SimpleEmitter {
       let services;
       try {
         const servicePromise = device.services();
-        const serviceTimeout = new Promise((_, reject) => 
+        const serviceTimeout = new Promise((_, reject) =>
           setTimeout(() => reject(new Error("Service read timeout")), 3000)
         );
         services = await Promise.race([servicePromise, serviceTimeout]) as any[];
@@ -1675,7 +1713,7 @@ class BLEManagerReal extends SimpleEmitter {
       let characteristics;
       try {
         const charPromise = vestService.characteristics();
-        const charTimeout = new Promise((_, reject) => 
+        const charTimeout = new Promise((_, reject) =>
           setTimeout(() => reject(new Error("Characteristic read timeout")), 3000)
         );
         characteristics = await Promise.race([charPromise, charTimeout]) as any[];
@@ -1718,28 +1756,56 @@ class BLEManagerReal extends SimpleEmitter {
                 try {
                   const buffer = Buffer.from(characteristic.value, "base64");
                   const status = buffer.toString("utf-8");
-                  this.log(`Vest status: ${status}`);
+
+                  // Log raw data for debugging
+                  const hexBytes = Array.from(buffer).map(b => b.toString(16).padStart(2, '0')).join(' ');
+                  this.log(`Vest status raw bytes: [${hexBytes}], decoded: ${status}`);
                   this.emit("vest_status", { status });
-                  
+
                   // Parse battery from vest status
                   let battery: number | undefined;
-                  
+
                   // Try parsing as JSON first (if status is JSON string)
                   try {
                     const jsonData = JSON.parse(status);
+                    this.log(`Vest status parsed as JSON: ${JSON.stringify(jsonData)}`);
                     if (typeof jsonData.battery === 'number' && jsonData.battery >= 0 && jsonData.battery <= 100) {
                       battery = jsonData.battery;
+                      this.log(`Vest battery from JSON: ${battery}%`);
+                    } else if (typeof jsonData.bat === 'number' && jsonData.bat >= 0 && jsonData.bat <= 100) {
+                      // Try alternative key 'bat'
+                      battery = jsonData.bat;
+                      this.log(`Vest battery from JSON (bat key): ${battery}%`);
+                    } else if (typeof jsonData.batt === 'number' && jsonData.batt >= 0 && jsonData.batt <= 100) {
+                      // Try alternative key 'batt'
+                      battery = jsonData.batt;
+                      this.log(`Vest battery from JSON (batt key): ${battery}%`);
                     }
                   } catch {
-                    // Not JSON, try parsing as binary (first byte might be battery)
-                    if (buffer.length > 0) {
+                    // Not JSON, try other parsing methods
+                    this.log(`Vest status is not JSON, trying binary/text parsing`);
+
+                    // Try parsing as "battery:XX" or "bat:XX" text format
+                    const batteryMatch = status.match(/(?:battery|bat|batt)[:\s]*(\d+)/i);
+                    if (batteryMatch) {
+                      const parsedBattery = parseInt(batteryMatch[1], 10);
+                      if (parsedBattery >= 0 && parsedBattery <= 100) {
+                        battery = parsedBattery;
+                        this.log(`Vest battery from text pattern: ${battery}%`);
+                      }
+                    }
+
+                    // Try binary (first byte might be battery) - but only if it's in typical battery range
+                    if (battery === undefined && buffer.length > 0) {
                       const firstByte = buffer[0];
+                      // ESP32 might send raw battery percentage as first byte
                       if (firstByte >= 0 && firstByte <= 100) {
                         battery = firstByte;
+                        this.log(`Vest battery from first byte: ${battery}%`);
                       }
                     }
                   }
-                  
+
                   // Emit vest data with battery if found (similar to human/dog data)
                   if (battery !== undefined) {
                     try {
@@ -1747,10 +1813,12 @@ class BLEManagerReal extends SimpleEmitter {
                         profile: "vest",
                         battery: battery,
                       });
-                      this.log(`Vest battery: ${battery}%`);
+                      this.log(`✓ Vest battery emitted: ${battery}%`);
                     } catch (emitError: any) {
                       this.log(`Error emitting vest battery data: ${emitError?.message ?? emitError}`);
                     }
+                  } else {
+                    this.log(`Could not extract battery from vest status data`);
                   }
                 } catch (parseError: any) {
                   this.log(`Failed to parse vest status: ${parseError?.message ?? parseError}`);
@@ -1762,7 +1830,7 @@ class BLEManagerReal extends SimpleEmitter {
             }
           }
         );
-        
+
         // CRITICAL: Store subscription for cleanup to prevent memory leaks
         if (subscription) {
           const deviceId = device.id;
@@ -1810,7 +1878,7 @@ class BLEManagerReal extends SimpleEmitter {
         return;
       }
     }
-    
+
     // Fallback: send as raw string (legacy behavior)
     const vest = this.devices.vest;
     if (!vest) {
@@ -1843,7 +1911,7 @@ class BLEManagerReal extends SimpleEmitter {
     // Map comfort signals to vest commands
     const vibration = opts?.vibration ?? (target === "dog" ? "gentle" : "pulse");
     let commandCode: number;
-    
+
     if (vibration === "gentle") {
       commandCode = THERAPY.MASSAGE; // Use MASSAGE for gentle vibration
     } else if (vibration === "pulse") {
@@ -1855,7 +1923,7 @@ class BLEManagerReal extends SimpleEmitter {
     // Enable IR light if requested
     if (opts?.redLight ?? (target === "dog")) {
       // Use LIGHT_ONLY mode for red light therapy
-      this.sendTherapyCommand(THERAPY.LIGHT_ONLY).catch(e => 
+      this.sendTherapyCommand(THERAPY.LIGHT_ONLY).catch(e =>
         this.log(`Failed to enable light therapy: ${e?.message ?? e}`)
       );
     }
@@ -1869,7 +1937,7 @@ class BLEManagerReal extends SimpleEmitter {
       .then(() => {
         this.comfortStatus = "active";
         this.emit("comfort", { status: "active", target });
-        
+
         // Auto-stop after duration
         if (opts?.durationMs) {
           setTimeout(() => {
@@ -1970,7 +2038,7 @@ class BLEManagerReal extends SimpleEmitter {
       // Safety: Ensure sync windows are arrays
       const humanWindow = Array.isArray(this.humanSyncWindow) ? this.humanSyncWindow : [];
       const dogWindow = Array.isArray(this.dogSyncWindow) ? this.dogSyncWindow : [];
-      
+
       const humanSeries = humanWindow.slice(-this.MAX_SYNC_SAMPLES);
       const dogSeries = dogWindow.slice(-this.MAX_SYNC_SAMPLES);
 
@@ -1981,29 +2049,29 @@ class BLEManagerReal extends SimpleEmitter {
         return;
       }
 
-      const humanHRVlatest = typeof humanSeries[humanSeries.length - 1] === 'number' 
-        ? humanSeries[humanSeries.length - 1] 
+      const humanHRVlatest = typeof humanSeries[humanSeries.length - 1] === 'number'
+        ? humanSeries[humanSeries.length - 1]
         : 0;
-      const dogHRVlatest = typeof dogSeries[dogSeries.length - 1] === 'number' 
-        ? dogSeries[dogSeries.length - 1] 
+      const dogHRVlatest = typeof dogSeries[dogSeries.length - 1] === 'number'
+        ? dogSeries[dogSeries.length - 1]
         : 0;
 
       // Use real HR data if available, otherwise use defaults
-      const humanHR = (typeof this.humanData?.heartRate === 'number' && this.humanData.heartRate > 0) 
-        ? this.humanData.heartRate 
+      const humanHR = (typeof this.humanData?.heartRate === 'number' && this.humanData.heartRate > 0)
+        ? this.humanData.heartRate
         : 75;
-      const dogHR = (typeof this.dogData?.heartRate === 'number' && this.dogData.heartRate > 0) 
-        ? this.dogData.heartRate 
+      const dogHR = (typeof this.dogData?.heartRate === 'number' && this.dogData.heartRate > 0)
+        ? this.dogData.heartRate
         : 95;
-      const resp = (typeof this.dogData?.respiratoryRate === 'number' && this.dogData.respiratoryRate > 0) 
-        ? this.dogData.respiratoryRate 
+      const resp = (typeof this.dogData?.respiratoryRate === 'number' && this.dogData.respiratoryRate > 0)
+        ? this.dogData.respiratoryRate
         : 24;
 
       // Safety: Ensure calculation functions don't crash
       let humanC = 0;
       let dogC = 0;
       let sync = 0;
-      
+
       try {
         humanC = calculateHumanCoherence(humanHRVlatest, humanHR);
         dogC = calculateDogCoherence(dogHRVlatest, dogHR, resp);
@@ -2141,10 +2209,10 @@ class BLEManagerReal extends SimpleEmitter {
   // ----------------------------------------------------------
   cleanup() {
     this.log("BLEManager: Cleaning up...");
-    
+
     // Stop Bond Sync mode first
     this.stopBondSyncMode();
-    
+
     // Remove all subscriptions (CRITICAL: prevents memory leaks)
     // Clean up per-device subscriptions
     this.deviceSubscriptions.forEach((subs, deviceId) => {
@@ -2160,7 +2228,7 @@ class BLEManagerReal extends SimpleEmitter {
       });
     });
     this.deviceSubscriptions.clear();
-    
+
     // Clean up main subscriptions array
     const subscriptionsToRemove = [...this.subscriptions];
     subscriptionsToRemove.forEach(sub => {
@@ -2174,7 +2242,7 @@ class BLEManagerReal extends SimpleEmitter {
       }
     });
     this.subscriptions = [];
-    
+
     // Stop scanning
     if (this.scanning) {
       try {
@@ -2183,7 +2251,7 @@ class BLEManagerReal extends SimpleEmitter {
         this.log("Error stopping scan during cleanup: " + String(e));
       }
     }
-    
+
     // Clear intervals
     if (this.bondInterval) {
       try {
@@ -2193,7 +2261,7 @@ class BLEManagerReal extends SimpleEmitter {
         this.log("Error clearing bond interval: " + String(e));
       }
     }
-    
+
     if (this.batteryReadInterval) {
       try {
         clearInterval(this.batteryReadInterval);
@@ -2211,7 +2279,7 @@ class BLEManagerReal extends SimpleEmitter {
         this.log("Error clearing bond sync interval: " + String(e));
       }
     }
-    
+
     // Disconnect all devices
     if (this.devices) {
       Object.values(this.devices).forEach(async (device) => {
@@ -2224,7 +2292,7 @@ class BLEManagerReal extends SimpleEmitter {
         }
       });
     }
-    
+
     // Reset all state
     this.devices = {};
     this.roles = {};
@@ -2238,7 +2306,7 @@ class BLEManagerReal extends SimpleEmitter {
     this.connectedRoles = { human: false, dog: false, vest: false };
     this.comfortStatus = "idle";
     this.currentTherapyMode = null;
-    
+
     this.log("BLEManager: Cleanup complete");
   }
 
@@ -2248,7 +2316,7 @@ class BLEManagerReal extends SimpleEmitter {
   disconnect() {
     // Use cleanup method to ensure all subscriptions are removed
     this.cleanup();
-    
+
     try {
       this.emit("disconnected");
       this.emitConnections();
@@ -2266,7 +2334,7 @@ class BLEManagerReal extends SimpleEmitter {
   private captureSyncSample(role: "human" | "dog") {
     try {
       const store = role === "human" ? this.humanData : this.dogData;
-      
+
       // Safety: Ensure store and hrv array exist
       if (!store || !Array.isArray(store.hrv) || store.hrv.length === 0) {
         return;
@@ -2287,7 +2355,7 @@ class BLEManagerReal extends SimpleEmitter {
       }
 
       const buffer = role === "human" ? this.humanSyncWindow : this.dogSyncWindow;
-      
+
       // Safety: Ensure buffer is an array
       if (!Array.isArray(buffer)) {
         if (role === "human") {
