@@ -21,6 +21,7 @@ import { SETTINGS_STORAGE_KEY } from "../storage/constants";
 import { loadPairedDevices, savePairedDevice } from "../storage/pairedDevices";
 import OnboardingTutorial from "../components/OnboardingTutorial";
 import { usePageOnboarding } from "../hooks/usePageOnboarding";
+import { useFirebase } from "../context/FirebaseContext";
 import { TutorialStep } from "../components/OnboardingTutorial";
 import * as Updates from "expo-updates";
 
@@ -63,6 +64,13 @@ export default function Settings() {
 
 
   const router = useRouter();
+  const firebase = useFirebase();
+  const [firebaseDeviceId, setFirebaseDeviceId] = useState<string>("");
+  useFocusEffect(
+    useCallback(() => {
+      if (firebase?.deviceId) setFirebaseDeviceId(firebase.deviceId);
+    }, [firebase?.deviceId])
+  );
   const [connectionSnapshot, setConnectionSnapshot] = useState<
     ReturnType<typeof bleManager.getConnections> | undefined
   >(bleManager.getConnections?.());
@@ -480,156 +488,10 @@ export default function Settings() {
       <Text style={[ui.heading, { color: theme.textDark }]}>Settings</Text>
       <Text style={[ui.description, { color: theme.textMuted }]}>Manage your devices and preferences</Text>
 
-      {/* Devices */}
+      {/* Device (v1: single harness for BLE WiFi provisioning) */}
       <View style={ui.section}>
-        <Text style={[ui.sectionTitle, { color: theme.textDark }]}>Devices</Text>
-
-        {/* DOG (primary) */}
-        <Text style={[ui.label, { color: theme.textMuted, marginTop: 6 }]}>Dog device (Polar H10)</Text>
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
-          <View>
-            <Text style={[ui.valueText, { color: theme.textDark }]}>{pairedDevices.dog ? pairedDevices.dog.name : "Not paired"}</Text>
-            <Text style={{ color: connectionSnapshot?.connected?.dog ? theme.primary : theme.textMuted, fontSize: 12, marginTop: 2 }}>
-              {connectionSnapshot?.connected?.dog ? "Connected" : "Not connected"}
-            </Text>
-          </View>
-          <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-            <TouchableOpacity
-              style={[ui.primaryBtn, { backgroundColor: theme.primary }]}
-              onPress={() => openPairingManager("dog")}
-            >
-              <Text style={ui.primaryBtnText}>{pairedDevices.dog ? "Manage" : "Pair"}</Text>
-            </TouchableOpacity>
-
-            {pairedDevices.dog ? (
-              <TouchableOpacity
-                style={[ui.secondaryBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
-                onPress={async () => {
-                  try {
-                    // Safety: Check if bleManager methods exist
-                    if (!bleManager || typeof bleManager.assignDeviceType !== "function" || typeof bleManager.connectToScannedDevice !== "function") {
-                      Alert.alert("Error", "Bluetooth manager not available");
-                      return;
-                    }
-
-                    if (pairedDevices.dog?.id) {
-                      bleManager.assignDeviceType(
-                        {
-                          id: pairedDevices.dog.id,
-                          name: pairedDevices.dog.name || "Dog Device",
-                          mac: pairedDevices.dog.id,
-                          rssi: -60,
-                        },
-                        "dog"
-                      );
-                      await bleManager.connectToScannedDevice(
-                        {
-                          id: pairedDevices.dog.id,
-                          name: pairedDevices.dog.name || "Dog Device",
-                          mac: pairedDevices.dog.id,
-                          rssi: -60,
-                        },
-                        "dog"
-                      );
-                      Alert.alert("Connected", "Dog device connected successfully.");
-                    } else {
-                      Alert.alert("Error", "No dog device paired.");
-                    }
-                  } catch (e: any) {
-                    console.warn("connect dog failed", e);
-                    Alert.alert("Error", `Failed to connect: ${e?.message || String(e)}`);
-                  }
-                }}
-              >
-                <Text style={[ui.secondaryBtnText, { color: theme.textDark }]}>{connectionSnapshot?.connected?.dog ? "Reconnect" : "Connect"}</Text>
-              </TouchableOpacity>
-            ) : null}
-
-            {pairedDevices.dog ? (
-              <TouchableOpacity
-                style={[ui.ghostBtn, { borderColor: theme.border, backgroundColor: theme.card }]}
-                onPress={() => handleUnassign("dog")}
-              >
-                <Text style={[ui.ghostBtnText, { color: theme.orange }]}>Unassign</Text>
-              </TouchableOpacity>
-            ) : null}
-          </View>
-        </View>
-
-        {/* HUMAN */}
-        <Text style={[ui.label, { color: theme.textMuted, marginTop: 12 }]}>Human device (Polar H10)</Text>
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
-          <View>
-            <Text style={[ui.valueText, { color: theme.textDark }]}>{pairedDevices.human ? pairedDevices.human.name : "Not paired"}</Text>
-            <Text style={{ color: connectionSnapshot?.connected?.human ? theme.primary : theme.textMuted, fontSize: 12, marginTop: 2 }}>
-              {connectionSnapshot?.connected?.human ? "Connected" : "Not connected"}
-            </Text>
-          </View>
-          <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-            <TouchableOpacity
-              style={[ui.primaryBtn, { backgroundColor: theme.primary }]}
-              onPress={() => openPairingManager("human")}
-            >
-              <Text style={ui.primaryBtnText}>{pairedDevices.human ? "Manage" : "Pair"}</Text>
-            </TouchableOpacity>
-
-            {pairedDevices.human ? (
-              <TouchableOpacity
-                style={[ui.secondaryBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
-                onPress={async () => {
-                  try {
-                    // Safety: Check if bleManager methods exist
-                    if (!bleManager || typeof bleManager.assignDeviceType !== "function" || typeof bleManager.connectToScannedDevice !== "function") {
-                      Alert.alert("Error", "Bluetooth manager not available");
-                      return;
-                    }
-
-                    if (pairedDevices.human?.id) {
-                      bleManager.assignDeviceType(
-                        {
-                          id: pairedDevices.human.id,
-                          name: pairedDevices.human.name || "Human Device",
-                          mac: pairedDevices.human.id,
-                          rssi: -60,
-                        },
-                        "human"
-                      );
-                      await bleManager.connectToScannedDevice(
-                        {
-                          id: pairedDevices.human.id,
-                          name: pairedDevices.human.name || "Human Device",
-                          mac: pairedDevices.human.id,
-                          rssi: -60,
-                        },
-                        "human"
-                      );
-                      Alert.alert("Connected", "Human device connected successfully.");
-                    } else {
-                      Alert.alert("Error", "No human device paired.");
-                    }
-                  } catch (e: any) {
-                    console.warn("connect human failed", e);
-                    Alert.alert("Error", `Failed to connect: ${e?.message || String(e)}`);
-                  }
-                }}
-              >
-                <Text style={[ui.secondaryBtnText, { color: theme.textDark }]}>{connectionSnapshot?.connected?.human ? "Reconnect" : "Connect"}</Text>
-              </TouchableOpacity>
-            ) : null}
-
-            {pairedDevices.human ? (
-              <TouchableOpacity
-                style={[ui.ghostBtn, { borderColor: theme.border, backgroundColor: theme.card }]}
-                onPress={() => handleUnassign("human")}
-              >
-                <Text style={[ui.ghostBtnText, { color: theme.orange }]}>Unassign</Text>
-              </TouchableOpacity>
-            ) : null}
-          </View>
-        </View>
-
-        {/* VEST */}
-        <Text style={[ui.label, { color: theme.textMuted, marginTop: 12 }]}>Therapy Vest (DogGPT)</Text>
+        <Text style={[ui.sectionTitle, { color: theme.textDark }]}>Device</Text>
+        <Text style={[ui.label, { color: theme.textMuted, marginTop: 6 }]}>PawsomeBond Harness</Text>
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
           <View>
             <Text style={[ui.valueText, { color: theme.textDark }]}>{pairedDevices.vest ? pairedDevices.vest.name : "Not paired"}</Text>
@@ -644,43 +506,27 @@ export default function Settings() {
             >
               <Text style={ui.primaryBtnText}>{pairedDevices.vest ? "Manage" : "Pair"}</Text>
             </TouchableOpacity>
-
             {pairedDevices.vest ? (
               <TouchableOpacity
                 style={[ui.secondaryBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
                 onPress={async () => {
                   try {
-                    // Safety: Check if bleManager methods exist
                     if (!bleManager || typeof bleManager.assignDeviceType !== "function" || typeof bleManager.connectToScannedDevice !== "function") {
                       Alert.alert("Error", "Bluetooth manager not available");
                       return;
                     }
-
                     if (pairedDevices.vest?.id) {
                       bleManager.assignDeviceType(
-                        {
-                          id: pairedDevices.vest.id,
-                          name: pairedDevices.vest.name || "Vest Device",
-                          mac: pairedDevices.vest.id,
-                          rssi: -60,
-                        },
+                        { id: pairedDevices.vest.id, name: pairedDevices.vest.name || "Harness", mac: pairedDevices.vest.id, rssi: -60 },
                         "vest"
                       );
                       await bleManager.connectToScannedDevice(
-                        {
-                          id: pairedDevices.vest.id,
-                          name: pairedDevices.vest.name || "Vest Device",
-                          mac: pairedDevices.vest.id,
-                          rssi: -60,
-                        },
+                        { id: pairedDevices.vest.id, name: pairedDevices.vest.name || "Harness", mac: pairedDevices.vest.id, rssi: -60 },
                         "vest"
                       );
-                      Alert.alert("Connected", "Vest connected successfully.");
-                    } else {
-                      Alert.alert("Error", "No vest device paired.");
-                    }
+                      Alert.alert("Connected", "Harness connected.");
+                    } else Alert.alert("Error", "No device paired.");
                   } catch (e: any) {
-                    console.warn("connect vest failed", e);
                     Alert.alert("Error", `Failed to connect: ${e?.message || String(e)}`);
                   }
                 }}
@@ -688,19 +534,42 @@ export default function Settings() {
                 <Text style={[ui.secondaryBtnText, { color: theme.textDark }]}>{connectionSnapshot?.connected?.vest ? "Reconnect" : "Connect"}</Text>
               </TouchableOpacity>
             ) : null}
-
             {pairedDevices.vest ? (
-              <TouchableOpacity
-                style={[ui.ghostBtn, { borderColor: theme.border, backgroundColor: theme.card }]}
-                onPress={() => handleUnassign("vest")}
-              >
+              <TouchableOpacity style={[ui.ghostBtn, { borderColor: theme.border, backgroundColor: theme.card }]} onPress={() => handleUnassign("vest")}>
                 <Text style={[ui.ghostBtnText, { color: theme.orange }]}>Unassign</Text>
               </TouchableOpacity>
             ) : null}
           </View>
         </View>
+        <Text style={[ui.hint, { color: theme.textMuted, marginTop: 10 }]}>BLE is used for WiFi provisioning only. Live data will come from Firebase.</Text>
 
-        <Text style={[ui.hint, { color: theme.textMuted, marginTop: 10 }]}>Tip: Dog device acts as the main tracker. Human and Vest are optional.</Text>
+        <Text style={[ui.label, { color: theme.textMuted, marginTop: 16 }]}>Firebase Device ID</Text>
+        <Text style={[ui.hint, { color: theme.textMuted, marginTop: 4 }]}>Required for live data and remote commands (e.g. PB-A3F2). Get from Darian after harness connects to cloud.</Text>
+        <TextInput
+          style={[ui.textInput, { backgroundColor: theme.card, borderColor: theme.border, color: theme.textDark, marginTop: 8 }]}
+          value={firebaseDeviceId || firebase?.deviceId || ""}
+          onChangeText={setFirebaseDeviceId}
+          placeholder="e.g. PB-A3F2"
+          placeholderTextColor={theme.textMuted}
+          onBlur={async () => {
+            const id = (firebaseDeviceId || firebase?.deviceId || "").trim();
+            if (id && firebase?.setDeviceId) {
+              await firebase.setDeviceId(id);
+            }
+          }}
+        />
+        <TouchableOpacity
+          style={[ui.secondaryBtn, { backgroundColor: theme.card, borderColor: theme.border, marginTop: 8 }]}
+          onPress={async () => {
+            const id = (firebaseDeviceId || firebase?.deviceId || "").trim();
+            if (id && firebase?.setDeviceId) {
+              await firebase.setDeviceId(id);
+              Alert.alert("Saved", "Device ID saved. Live data will load if harness is streaming.");
+            }
+          }}
+        >
+          <Text style={[ui.secondaryBtnText, { color: theme.textDark }]}>Save Device ID</Text>
+        </TouchableOpacity>
       </View>
 
       {/* Connection Settings */}

@@ -323,27 +323,43 @@ class BLEManagerReal extends SimpleEmitter {
           const { id, name, rssi } = device;
 
           // Get device service UUIDs (if available from scan response)
+          // On Android, serviceUUIDs is often empty in scan; vest is then matched by name only (e.g. "PAWSOMEBOND-VEST").
           const serviceUUIDs = device.serviceUUIDs || [];
           const serviceUUIDsLower = serviceUUIDs.map((uuid: string) => uuid.toLowerCase());
 
           // Check if it's a PawsomeBond Vest by service UUID (future-proof for generic ESP32)
-          const isVestByService = serviceUUIDsLower.some((uuid: string) =>
-            uuid.includes('4fafc201') || uuid.includes(VEST_SERVICE_UUID.toLowerCase().substring(0, 8))
-          );
+          // Check both full UUID and partial UUID match
+          const vestServiceUUIDLower = VEST_SERVICE_UUID.toLowerCase();
+          const isVestByService = serviceUUIDsLower.some((uuid: string) => {
+            const uuidLower = uuid.toLowerCase();
+            return uuidLower.includes('4fafc201') || 
+                   uuidLower === vestServiceUUIDLower ||
+                   uuidLower.replace(/-/g, '').includes('4fafc201');
+          });
 
           // Check if it's a Polar H10 by service UUID
-          const isPolarByService = serviceUUIDsLower.some((uuid: string) =>
-            uuid.includes('180d') || uuid.includes(HEART_RATE_SERVICE_UUID.toLowerCase().substring(0, 8))
-          );
+          const heartRateServiceUUIDLower = HEART_RATE_SERVICE_UUID.toLowerCase();
+          const isPolarByService = serviceUUIDsLower.some((uuid: string) => {
+            const uuidLower = uuid.toLowerCase();
+            return uuidLower.includes('180d') || 
+                   uuidLower === heartRateServiceUUIDLower ||
+                   uuidLower.replace(/-/g, '').includes('180d');
+          });
 
           // Match by name pattern per NEW_REQUIREMENTS.md
           // Polar H10: name includes "Polar H10" (case-insensitive)
-          // PAWSOMEBOND-VEST: exact name match "PAWSOMEBOND-VEST" (case-insensitive)
-          const nameLower = name?.toLowerCase() || "";
+          // PAWSOMEBOND-VEST: flexible matching for name variations
+          const nameLower = (name?.toLowerCase() || "").trim();
           const isPolarH10ByName = nameLower.includes("polar h10") ||
             nameLower.includes("polar h 10");
-          // CRITICAL: Exact match for "PAWSOMEBOND-VEST" (case-insensitive)
-          const isVestByName = nameLower === "pawsomebond-vest";
+          
+          // CRITICAL: More flexible vest name matching to catch variations
+          // Check for exact match, partial match, and common variations
+          const isVestByName = nameLower === "pawsomebond-vest" ||
+            nameLower === "pawsomebond vest" ||
+            nameLower.startsWith("pawsomebond") ||
+            (nameLower.includes("pawsomebond") && nameLower.includes("vest")) ||
+            nameLower.includes("pawsomebond-vest");
 
           // Combine service UUID and name matching
           const isPolarH10 = isPolarH10ByName || isPolarByService;
@@ -364,10 +380,15 @@ class BLEManagerReal extends SimpleEmitter {
             : "Polar H10 (select role)";
 
           this.log(`Found ${label} [${detectionMethod}]: ${name || 'Unknown'} (${id})`);
+          
+          // If vest detected by service UUID but name doesn't match, use a default name
+          const displayName = isVest && !isVestByName && !name 
+            ? "PAWSOMEBOND-VEST" 
+            : (name ?? null);
 
           onDeviceFound({
             id,
-            name: name ?? null,
+            name: displayName,
             mac: id,
             rssi,
           });

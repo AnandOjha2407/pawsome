@@ -15,12 +15,19 @@ export default {
       supportsTablet: true,
       bundleIdentifier: "com.bondai.doggpt",
       infoPlist: {
-        ITSAppUsesNonExemptEncryption: false
+        // Required by App Store review for any app using encryption.
+        ITSAppUsesNonExemptEncryption: false,
+        // Required for Bluetooth LE on iOS – this is shown in the system prompt.
+        NSBluetoothAlwaysUsageDescription:
+          "PawsomeBond uses Bluetooth to connect to heart-rate monitors and the therapy vest.",
+        // Older iOS / extra clarity; safe to include.
+        NSBluetoothPeripheralUsageDescription:
+          "PawsomeBond needs Bluetooth access to communicate with your vest and sensors."
       }
     },
 
     android: {
-      package: "com.pawsome.pawsome",
+      package: "com.pawsomebond.app",
 
       permissions: [
         "android.permission.BLUETOOTH",
@@ -68,6 +75,8 @@ export default {
           }
         }
       ],
+      "@react-native-firebase/app",   // add this
+      "@react-native-firebase/auth",
       "react-native-ble-plx",
       "expo-updates"
     ],

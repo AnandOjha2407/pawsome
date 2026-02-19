@@ -3,6 +3,7 @@ import { MaterialIcons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
 import { ThemeProvider, useTheme } from "../src/ThemeProvider";
+import { FirebaseProvider } from "../src/context/FirebaseContext";
 import { useEffect } from "react";
 import { Platform, AppState } from "react-native";
 import * as SystemUI from "expo-system-ui";
@@ -53,22 +54,22 @@ function TabsNavigator() {
         }}
       />
       <Tabs.Screen
-        name="bondai"
+        name="calm"
         options={{
-          title: "BondAI",
-          tabBarLabel: "BondAI",
+          title: "Calm",
+          tabBarLabel: "Calm",
           tabBarIcon: ({ color, size }) => (
-            <MaterialIcons name="chat" color={color} size={size} />
+            <MaterialIcons name="favorite" color={color} size={size} />
           ),
         }}
       />
       <Tabs.Screen
-        name="analytics"
+        name="history"
         options={{
-          title: "Analytics",
-          tabBarLabel: "Analytics",
+          title: "History",
+          tabBarLabel: "History",
           tabBarIcon: ({ color, size }) => (
-            <MaterialIcons name="analytics" color={color} size={size} />
+            <MaterialIcons name="history" color={color} size={size} />
           ),
         }}
       />
@@ -82,13 +83,7 @@ function TabsNavigator() {
           ),
         }}
       />
-      {/* Hide non-tab screens from tab bar */}
-      <Tabs.Screen
-        name="insights"
-        options={{
-          href: null,
-        }}
-      />
+      {/* Hidden: onboarding / WiFi provisioning (future) */}
       <Tabs.Screen
         name="pairing"
         options={{
@@ -160,10 +155,7 @@ export default function RootLayout() {
               const paired = await loadPairedDevices();
               
               // Check if we have paired devices that aren't connected
-              const needsReconnect = 
-                (paired.dog && !connections.connected?.dog) ||
-                (paired.human && !connections.connected?.human) ||
-                (paired.vest && !connections.connected?.vest);
+              const needsReconnect = paired.vest && !connections.connected?.vest;
               
               if (needsReconnect && bleManager && typeof (bleManager as any).autoConnectPairedDevices === "function") {
                 console.log("[RootLayout] App became active - checking for disconnected devices...");
@@ -188,7 +180,9 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <ThemeProvider>
-          <TabsNavigator />
+          <FirebaseProvider>
+            <TabsNavigator />
+          </FirebaseProvider>
         </ThemeProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

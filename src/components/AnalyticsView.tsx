@@ -81,7 +81,7 @@ export default function AnalyticsView({ theme, refreshTrigger }: Props) {
     if (improvement.trend === "improving") {
       return theme.success || "#4CAF50";
     } else if (improvement.trend === "declining") {
-      return theme.error || "#F44336";
+      return theme.alert || "#F44336";
     }
     return theme.textMuted;
   };
@@ -320,8 +320,8 @@ export default function AnalyticsView({ theme, refreshTrigger }: Props) {
                       color: record.bondScore >= 70
                         ? theme.success || theme.primary
                         : record.bondScore >= 50
-                        ? theme.warning || theme.secondary
-                        : theme.error || theme.textMuted,
+                        ? theme.orange || theme.secondary
+                        : theme.alert || theme.textMuted,
                       fontWeight: "600",
                     },
                     { flex: 1 },

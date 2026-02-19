@@ -196,19 +196,17 @@ export default function Pairing() {
           if (!d || !d.id) return;
 
           // Note: Device name might be null for some devices, but we can still match by service UUID
-          const nameLower = (d.name || "").toLowerCase();
+          const nameLower = (d.name || "").toLowerCase().trim();
           
-          // Match by name pattern - works for ANY Polar or Vest
-          // CRITICAL: Exact match for "PAWSOMEBOND-VEST" (case-insensitive)
-          const isPolarH10 = nameLower.includes("polar h10") || 
-                            nameLower.includes("polar h 10");
-          const isVest = nameLower === "pawsomebond-vest";
+          // v1: Only PawsomeBond harness (vest)
+          const isVest = nameLower === "pawsomebond-vest" ||
+                        nameLower === "pawsomebond vest" ||
+                        nameLower.startsWith("pawsomebond") ||
+                        (nameLower.includes("pawsomebond") && nameLower.includes("vest")) ||
+                        nameLower.includes("pawsomebond-vest");
           
-          // Note: Service UUID matching is handled in BLEManager.ts
-          // This screen just filters the results from BLEManager
-          
-          if (!isPolarH10 && !isVest) {
-            // Skip unknown devices
+          if (!isVest) {
+            // Skip unknown devices (though BLEManager should have filtered these already)
             return;
           }
 
@@ -218,7 +216,13 @@ export default function Pairing() {
               const safePrev = Array.isArray(prev) ? prev : [];
               // Don't add duplicates
               if (safePrev.some((x) => x && x.id === d.id)) return safePrev;
-              return [...safePrev, d];
+              
+              // If vest detected but name is missing or empty, use default (so connection has a valid name)
+              const displayName = (!d.name || (d.name || "").trim() === "")
+                ? "PAWSOMEBOND-VEST"
+                : d.name;
+              
+              return [...safePrev, { ...d, name: displayName }];
             } catch (err) {
               console.warn("Error updating device list:", err);
               return prev;
@@ -265,14 +269,17 @@ export default function Pairing() {
 
   // Helper function to get device type icon and label
   const getDeviceTypeInfo = (deviceName: string | null | undefined, deviceId?: string | null) => {
-    if (!deviceName) {
-      return { icon: "❓", label: "Unknown Device", type: null };
-    }
+    const nameLower = (deviceName || "").toLowerCase().trim();
     
-    const nameLower = deviceName.toLowerCase();
-    
-    // Check if it's a vest - CRITICAL: Exact match for "PAWSOMEBOND-VEST"
-    if (nameLower === "pawsomebond-vest") {
+    // Check if it's a vest - More flexible matching
+    if (nameLower === "pawsomebond-vest" ||
+        nameLower === "pawsomebond vest" ||
+        nameLower.startsWith("pawsomebond") ||
+        (nameLower.includes("pawsomebond") && nameLower.includes("vest")) ||
+        nameLower.includes("pawsomebond-vest") ||
+        nameLower === "") { // Empty name might be vest detected by service UUID
+      // If name is empty but we're checking, it might be a vest detected by service UUID
+      // We'll check if it's actually a vest when connecting
       return { icon: "🦺", label: "PAWSOMEBOND-VEST", type: "vest" as Role };
     }
     
@@ -285,22 +292,8 @@ export default function Pairing() {
   };
 
   const pickRole = (dev: DeviceItem) => {
-    if (!dev.name) {
-      Alert.alert("Error", "Device name is missing");
-      return;
-    }
-    
-    const nameLower = (dev.name || "").toLowerCase();
-    
-    // If it's a vest - CRITICAL: Exact match for "PAWSOMEBOND-VEST"
-    if (nameLower === "pawsomebond-vest") {
-      finalConnect(dev, "vest");
-      return;
-    }
-    
-    // For Polar H10, always show role picker (user selects Human/Dog/Vest)
-    // This works with ANY Polar H10 device, not just hardcoded MACs
-    showManualPicker(dev);
+    // v1: All scanned devices are harness (vest)
+    finalConnect(dev, "vest");
   };
 
   const showManualPicker = (dev: DeviceItem) => {
@@ -349,10 +342,13 @@ export default function Pairing() {
         return;
       }
 
+      // For vest, ensure we have a proper name even if it was detected by service UUID
+      const deviceName = device.name || (type === "vest" ? "PAWSOMEBOND-VEST" : `${type} device`);
+
       const descriptor = {
         ...device,
         mac: device.mac ?? device.id,
-        name: device.name ?? `${type} device`,
+        name: deviceName,
         rssi: (typeof device.rssi === 'number') ? device.rssi : -60,
       };
 
@@ -382,15 +378,21 @@ export default function Pairing() {
         return;
       }
 
+      // Show connecting state (optional - could add loading indicator)
+      console.log(`Connecting to ${descriptor.name} as ${type}...`);
+
       try {
         await bleManager.connectToScannedDevice(descriptor, type);
       } catch (connectError: any) {
         console.warn("Connect failed:", connectError);
         const errorMessage = connectError?.message || connectError?.toString() || "Unknown error";
-        Alert.alert(
-          "Connection Failed", 
-          `Failed to connect to ${descriptor.name || type} device:\n\n${errorMessage}\n\nPlease ensure:\n• Device is powered on\n• Device is nearby\n• Bluetooth is enabled\n• Try scanning again`
-        );
+        
+        // For vest, provide more specific error guidance
+        const errorGuidance = type === "vest" 
+          ? `Failed to connect to ${descriptor.name}:\n\n${errorMessage}\n\nPlease ensure:\n• Vest is powered on\n• Vest is nearby (within 10 feet)\n• Bluetooth is enabled\n• Try scanning again\n• If vest was just turned on, wait 5 seconds and scan again`
+          : `Failed to connect to ${descriptor.name || type} device:\n\n${errorMessage}\n\nPlease ensure:\n• Device is powered on\n• Device is nearby\n• Bluetooth is enabled\n• Try scanning again`;
+        
+        Alert.alert("Connection Failed", errorGuidance);
         return;
       }
 
@@ -403,7 +405,7 @@ export default function Pairing() {
 
       Alert.alert(
         "Connected",
-        `Successfully connected to ${descriptor.name || type} device as ${type.toUpperCase()}`
+        `Successfully connected to ${descriptor.name} as ${type.toUpperCase()}`
       );
     } catch (err: any) {
       console.warn("Connect failed:", err);

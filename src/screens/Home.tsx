@@ -38,6 +38,7 @@ import Svg, { Circle, G } from "react-native-svg";
 import { Animated as RNAnimated } from "react-native";
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
+import { useFirebase } from "../context/FirebaseContext";
 import OnboardingTutorial from "../components/OnboardingTutorial";
 import { useOnboarding } from "../hooks/useOnboarding";
 import { TUTORIAL_STEPS } from "../config/tutorialSteps";
@@ -98,6 +99,44 @@ function AnimatedButton({
         {children}
       </Animated.View>
     </Pressable>
+  );
+}
+
+function LiveStateCard({ activeTheme }: { activeTheme: Theme }) {
+  const firebase = useFirebase();
+  const live = firebase?.liveState;
+  const STATE_EMOJI: Record<string, string> = {
+    SLEEPING: "🌙",
+    CALM: "😌",
+    ALERT: "👀",
+    ANXIOUS: "😟",
+    ACTIVE: "🏃",
+  };
+  const state = live?.state ?? "CALM";
+  const emoji = STATE_EMOJI[state] ?? "😌";
+  return (
+    <View
+      style={{
+        marginTop: 18,
+        marginBottom: 20,
+        padding: 24,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: activeTheme.card,
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: activeTheme.border,
+        minHeight: 140,
+      }}
+    >
+      <Text style={{ fontSize: 48 }}>{emoji}</Text>
+      <Text style={{ fontWeight: "700", fontSize: 18, marginTop: 8, color: activeTheme.textDark }}>{state}</Text>
+      <Text style={{ fontSize: 13, marginTop: 4, color: activeTheme.textMuted }}>
+        {live
+          ? `Anxiety: ${live.anxietyScore}/100 • Confidence: ${live.confidence}%`
+          : "Set Device ID in Settings for live data"}
+      </Text>
+    </View>
   );
 }
 
@@ -1160,21 +1199,19 @@ export default function Home({ navigation }: Props) {
 
   const CAROUSEL_SLIDES = [
     {
-      title: "Track & Train",
-      text: "Real-time telemetry for your dog.",
-      icon: <MaterialCommunityIcons name="pulse" size={42} color={activeTheme.textOnPrimary} />,
+      title: "Pair Harness",
+      text: "Connect your PawsomeBond harness over BLE for WiFi setup.",
+      icon: <MaterialCommunityIcons name="bluetooth" size={42} color={activeTheme.textOnPrimary} />,
     },
     {
-      title: "Smart Device",
-      text: "Connect with your dog and track it's health",
-      icon: (
-        <MaterialCommunityIcons name="link-variant" size={42} color={activeTheme.textOnPrimary} />
-      ),
+      title: "Dashboard",
+      text: "Live emotional state and anxiety score (Firebase).",
+      icon: <MaterialCommunityIcons name="chart-line" size={42} color={activeTheme.textOnPrimary} />,
     },
     {
-      title: "BondAI Chat",
-      text: "Ask BondAI for training tips, health insights.",
-      icon: <MaterialIcons name="chat" size={42} color={activeTheme.textOnPrimary} />,
+      title: "History",
+      text: "Anxiety timeline and event log.",
+      icon: <MaterialIcons name="history" size={42} color={activeTheme.textOnPrimary} />,
     },
   ];
 
@@ -1472,22 +1509,6 @@ export default function Home({ navigation }: Props) {
             <TouchableOpacity
               onPress={() => {
                 if (navigation) {
-                  navigation.navigate("BondAI");
-                } else {
-                  router.push("/bondai");
-                }
-              }}
-              style={{ padding: 8 }}
-              accessibilityLabel="Open BondAI"
-            >
-              <MaterialIcons name="chat" size={20} color={activeTheme.primary} />
-            </TouchableOpacity>
-          </View>
-
-          <View collapsable={false}>
-            <TouchableOpacity
-              onPress={() => {
-                if (navigation) {
                   navigation.navigate("Settings");
                 } else {
                   router.push("/settings");
@@ -1518,22 +1539,9 @@ export default function Home({ navigation }: Props) {
       >
         {/* Content starts directly here - no banner */}
 
-        {/* Bond Score Rings - 3 separate circles */}
-        <View
-          ref={ringsContainerRef}
-          collapsable={false}
-          style={{
-            marginTop: 18,
-            gap: 22,
-            alignItems: "center",
-            marginBottom: 20,
-            minHeight: 300, // Ensure consistent measurement
-          }}
-          onLayout={() => {
-            // Trigger re-measurement when layout changes
-          }}
-        >
-          {ThreeRingDisplay}
+        {/* Live state (Firebase or placeholder) */}
+        <View ref={ringsContainerRef} collapsable={false}>
+          <LiveStateCard activeTheme={activeTheme} />
         </View>
 
         {/* Device Strip — TAP to open details */}
@@ -1602,73 +1610,7 @@ export default function Home({ navigation }: Props) {
                     </Text>
                   </View>
                 </AnimatedButton>
-              ) : (
-                <>
-                  <AnimatedButton
-                    onPress={manualSync}
-                    style={{
-                      backgroundColor: activeTheme.card,
-                      padding: 10,
-                      borderRadius: activeTheme.buttonRadius,
-                      borderWidth: 1,
-                      borderColor: activeTheme.border,
-                    }}
-                  >
-                    <View
-                      style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        gap: 8,
-                      }}
-                    >
-                      <MaterialIcons
-                        name="sync"
-                        size={16}
-                        color={activeTheme.textDark}
-                      />
-                      <Text
-                        style={{
-                          color: activeTheme.textDark,
-                          fontWeight: "700",
-                        }}
-                      >
-                        Sync
-                      </Text>
-                    </View>
-                  </AnimatedButton>
-
-                  <AnimatedButton
-                    onPress={() => {
-                      if (isTraining) stopTraining();
-                      else startTraining();
-                    }}
-                    style={{
-                      backgroundColor: isTraining
-                        ? activeTheme.orange
-                        : activeTheme.primary,
-                      padding: 10,
-                      borderRadius: activeTheme.buttonRadius,
-                      shadowColor: isTraining ? activeTheme.orange : activeTheme.primary,
-                      shadowOpacity: 0.4,
-                      shadowRadius: 12,
-                      shadowOffset: { width: 0, height: 4 },
-                    }}
-                  >
-                    <View
-                      style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        gap: 8,
-                      }}
-                    >
-                      <FontAwesome5 name="running" size={12} color={activeTheme.textOnPrimary} />
-                      <Text style={{ color: activeTheme.textOnPrimary, fontWeight: "700" }}>
-                        {isTraining ? "Stop" : "Start"}
-                      </Text>
-                    </View>
-                  </AnimatedButton>
-                </>
-              )}
+              ) : null}
             </View>
           </LinearGradient>
         </TouchableOpacity>
@@ -1718,30 +1660,11 @@ export default function Home({ navigation }: Props) {
                 <AnimatedButton
                   onPress={() => {
                     try {
-                      if (i === 0) {
-                        // Track & Train - Pair Now
-                        if (navigation) {
-                          navigation.navigate("Pairing");
-                        } else {
-                          router.push("/pairing");
-                        }
-                      } else if (i === 1) {
-                        // Smart Device - Learn More
-                        Alert.alert(
-                          "Dual Devices",
-                          "Learn more about connecting two devices"
-                        );
-                      } else {
-                        // BondAI Chat - Navigate to BondAI
-                        if (navigation) {
-                          navigation.navigate("BondAI");
-                        } else {
-                          router.push("/bondai");
-                        }
-                      }
+                      if (i === 0) router.push("/pairing");
+                      else if (i === 1) router.push("/dashboard");
+                      else router.push("/history" as any);
                     } catch (err) {
                       console.error("Navigation error:", err);
-                      Alert.alert("Error", "Could not navigate. Please try again.");
                     }
                   }}
                   style={{ marginTop: 12 }}
@@ -1760,11 +1683,7 @@ export default function Home({ navigation }: Props) {
                     }}
                   >
                     <Text style={{ color: activeTheme.textOnPrimary, fontWeight: "800" }}>
-                      {i === 0
-                        ? "Pair Now"
-                        : i === 1
-                          ? "Learn More"
-                          : "Chat with BondAI"}
+                      {i === 0 ? "Pair Now" : i === 1 ? "Dashboard" : "History"}
                     </Text>
                   </View>
                 </AnimatedButton>
@@ -1787,174 +1706,10 @@ export default function Home({ navigation }: Props) {
           </View>
         </LinearGradient>
 
-        {/* Quick Training Session */}
-        <View style={{ marginTop: 8 }}>
-          <Text
-            style={{
-              fontWeight: "800",
-              color: activeTheme.textDark,
-              marginBottom: 10,
-              fontSize: 18,
-            }}
-          >
-            Training Session
-          </Text>
-          
-          {/* Device Connection Status */}
-          <View style={styles.deviceStatusRow}>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-              <View
-                style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: 4,
-                  backgroundColor: dogOnline ? activeTheme.primary : activeTheme.textMuted,
-                }}
-              />
-              <Text
-                style={{
-                  color: dogOnline ? activeTheme.primary : activeTheme.textMuted,
-                  fontSize: 13,
-                  fontWeight: "600",
-                }}
-              >
-                Collar {dogOnline ? "Connected" : "Not Connected"}
-              </Text>
-            </View>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-              <View
-                style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: 4,
-                  backgroundColor: vestOnline ? activeTheme.primary : activeTheme.textMuted,
-                }}
-              />
-              <Text
-                style={{
-                  color: vestOnline ? activeTheme.primary : activeTheme.textMuted,
-                  fontSize: 13,
-                  fontWeight: "600",
-                }}
-              >
-                Vest {vestOnline ? "Connected" : "Not Connected"}
-              </Text>
-            </View>
-          </View>
-
-          {/* Start/Stop Session Button */}
-          <TouchableOpacity
-            onPress={() => (isTraining ? stopTraining() : startTraining())}
-            disabled={!dogOnline || !vestOnline}
-            style={[
-              {
-                backgroundColor: isTraining
-                  ? activeTheme.orange
-                  : activeTheme.primary,
-                paddingVertical: 14,
-                paddingHorizontal: 20,
-                borderRadius: 12,
-                alignItems: "center",
-                justifyContent: "center",
-                marginTop: 12,
-                opacity: dogOnline && vestOnline ? 1 : 0.5,
-                shadowColor: isTraining ? activeTheme.orange : activeTheme.primary,
-                shadowOpacity: 0.3,
-                shadowRadius: 8,
-                shadowOffset: { width: 0, height: 4 },
-                elevation: 4,
-              },
-            ]}
-          >
-            <Text style={{ color: activeTheme.textOnPrimary, fontWeight: "800", fontSize: 16 }}>
-              {isTraining ? "⏹ Stop Session" : "▶ Start Session"}
-            </Text>
-            {!dogOnline || !vestOnline ? (
-              <Text style={{ color: activeTheme.textOnPrimary, fontSize: 11, marginTop: 4, opacity: 0.8 }}>
-                Connect devices to start
-              </Text>
-            ) : null}
-          </TouchableOpacity>
-
-          {/* Comfort Signals */}
-          {isTraining && (
-            <View style={{ marginTop: 16 }}>
-              <Text
-                style={{
-                  color: activeTheme.textMuted,
-                  fontSize: 13,
-                  fontWeight: "600",
-                  marginBottom: 10,
-                }}
-              >
-                Comfort Signals
-              </Text>
-              <View style={{ flexDirection: "row", gap: 10 }}>
-                <TouchableOpacity
-                  onPress={() => sendComfort("dog", "gentle")}
-                  disabled={!vestOnline}
-                  style={[
-                    {
-                      flex: 1,
-                      backgroundColor: activeTheme.card,
-                      borderWidth: 1,
-                      borderColor: activeTheme.border,
-                      paddingVertical: 12,
-                      paddingHorizontal: 16,
-                      borderRadius: 10,
-                      alignItems: "center",
-                      opacity: vestOnline ? 1 : 0.5,
-                    },
-                  ]}
-                >
-                  <Text style={{ color: activeTheme.textDark, fontWeight: "600", fontSize: 14 }}>
-                    🐕 Comfort Dog
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  onPress={() => sendComfort("human", "pulse")}
-                  disabled={!vestOnline}
-                  style={[
-                    {
-                      flex: 1,
-                      backgroundColor: activeTheme.card,
-                      borderWidth: 1,
-                      borderColor: activeTheme.border,
-                      paddingVertical: 12,
-                      paddingHorizontal: 16,
-                      borderRadius: 10,
-                      alignItems: "center",
-                      opacity: vestOnline ? 1 : 0.5,
-                    },
-                  ]}
-                >
-                  <Text style={{ color: activeTheme.textDark, fontWeight: "600", fontSize: 14 }}>
-                    👤 Comfort Human
-                  </Text>
-                </TouchableOpacity>
-              </View>
-              <Text style={{ color: activeTheme.textMuted, marginTop: 8, fontSize: 11 }}>
-                Sends red light and gentle vibration to the vest for 30 seconds
-              </Text>
-            </View>
-          )}
-        </View>
-
-        {/* Analytics Section */}
+        {/* History shortcut */}
         <View style={{ marginTop: 24 }}>
           <TouchableOpacity
-            onPress={() => {
-              try {
-                if (navigation) {
-                  navigation.navigate("Analytics");
-                } else {
-                  router.push("/analytics");
-                }
-              } catch (err: any) {
-                console.error("Navigation error:", err);
-              }
-            }}
+            onPress={() => router.push("/history" as any)}
             style={{
               flexDirection: "row",
               alignItems: "center",
@@ -1969,7 +1724,7 @@ export default function Home({ navigation }: Props) {
           >
             <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
               <MaterialIcons
-                name="analytics"
+                name="history"
                 size={24}
                 color={activeTheme.primary}
               />
@@ -1980,7 +1735,7 @@ export default function Home({ navigation }: Props) {
                   color: activeTheme.textDark,
                 }}
               >
-                Analytics & Progress
+                History
               </Text>
             </View>
             <MaterialIcons
