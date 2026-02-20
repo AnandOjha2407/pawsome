@@ -1,10 +1,10 @@
 {
   "expo": {
-    "name": "pawsome",
+    "name": "DARYX",
     "slug": "doggpt",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/intro_logo.png",
+    "icon": "./assets/images/intro_logo2.png",
     "scheme": [
       "pawsomeapp",
       "expopawsomeapp"
@@ -21,7 +21,9 @@
     },
 
     "android": {
-      "package": "com.pawsome.pawsome",
+      "package": "com.pawsomebond.app",
+      "googleServicesFile": "./google-services.json",
+      "label": "DARYX",
       "permissions": [
         "android.permission.BLUETOOTH",
         "android.permission.BLUETOOTH_ADMIN",
@@ -46,13 +48,13 @@
         }
       ],
       "adaptiveIcon": {
-        "backgroundColor": "#0F172A",
-        "foregroundImage": "./assets/images/intro_logo.png"
+        "backgroundColor": "#0D1117",
+        "foregroundImage": "./assets/images/intro_logo2.png"
       },
       "splash": {
-        "image": "./assets/images/intro_logo.png",
+        "image": "./assets/images/intro_logo2.png",
         "resizeMode": "contain",
-        "backgroundColor": "#0F172A"
+        "backgroundColor": "#0D1117"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
@@ -74,18 +76,20 @@
     },
 
     "plugins": [
+      "expo-router",
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/intro_logo.png",
+          "image": "./assets/images/intro_logo2.png",
           "imageWidth": 280,
           "resizeMode": "contain",
-          "backgroundColor": "#0F172A",
+          "backgroundColor": "#0D1117",
           "dark": {
-            "backgroundColor": "#0F172A"
+            "backgroundColor": "#0D1117"
           }
         }
       ],
+      "@react-native-firebase/app",
       "react-native-ble-plx",
       "expo-updates"
     ],

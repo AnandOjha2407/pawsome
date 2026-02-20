@@ -1,6 +1,6 @@
 export default {
   expo: {
-    name: "pawsome",
+    name: "DARYX",
     slug: "doggpt",
     version: "1.0.0",
     orientation: "portrait",
@@ -28,6 +28,8 @@ export default {
 
     android: {
       package: "com.pawsomebond.app",
+      googleServicesFile: "./google-services.json",
+      label: "DARYX",
 
       permissions: [
         "android.permission.BLUETOOTH",
@@ -76,10 +78,6 @@ export default {
         }
       ],
       "@react-native-firebase/app",
-      "@react-native-firebase/auth",
-      "@react-native-firebase/database",
-      "@react-native-firebase/firestore",
-      "@react-native-firebase/messaging",
       "react-native-ble-plx",
       "expo-updates"
     ],

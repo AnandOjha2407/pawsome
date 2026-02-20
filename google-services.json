@@ -8,12 +8,17 @@
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:194207887869:android:ded41657784fce2a5ba994",
+        "mobilesdk_app_id": "1:194207887869:android:53500d5e8e5265ae5ba994",
         "android_client_info": {
-          "package_name": "app.config.js"
+          "package_name": "com.pawsomebond.app"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "194207887869-35bl3edlglngcphtvsc5qcg6fsfc5q36.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyAP8sX1Elr1fTiEaNP0aK5lQpdAL2pJgcs"
@@ -21,7 +26,12 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "194207887869-35bl3edlglngcphtvsc5qcg6fsfc5q36.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }
