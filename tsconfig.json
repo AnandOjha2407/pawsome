@@ -23,7 +23,7 @@
   ],
   "include": [
     "src",
-    "App.tsx",
+    "app",
     "app.json",
     "app.config.js",
     ".expo/types/**/*.ts",

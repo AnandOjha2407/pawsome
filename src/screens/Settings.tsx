@@ -24,6 +24,7 @@ import { usePageOnboarding } from "../hooks/usePageOnboarding";
 import { useFirebase } from "../context/FirebaseContext";
 import { TutorialStep } from "../components/OnboardingTutorial";
 import * as Updates from "expo-updates";
+import { writeDeviceConfig, loadDeviceConfig, PROTOCOLS } from "../firebase/firebase";
 
 /**
  * Settings screen with lightweight BLE integration.
@@ -50,6 +51,10 @@ export default function Settings() {
   const [stressAlertsEnabled, setStressAlertsEnabled] = useState<boolean>(true);
   const [stressThreshold, setStressThreshold] = useState<string>("90");
   const [loading, setLoading] = useState<boolean>(true);
+  const [autoCalmEnabled, setAutoCalmEnabled] = useState<boolean>(false);
+  const [autoCalmThreshold, setAutoCalmThreshold] = useState<string>("70");
+  const [autoCalmProtocol, setAutoCalmProtocol] = useState<number>(1);
+  const [autoCalmIntensity, setAutoCalmIntensity] = useState<number>(3);
 
   // Settings tutorial steps
   const SETTINGS_TUTORIAL_STEPS: TutorialStep[] = [
@@ -71,6 +76,22 @@ export default function Settings() {
       if (firebase?.deviceId) setFirebaseDeviceId(firebase.deviceId);
     }, [firebase?.deviceId])
   );
+
+  useEffect(() => {
+    let mounted = true;
+    if (!firebase?.deviceId) return;
+    loadDeviceConfig(firebase.deviceId)
+      .then((config) => {
+        if (mounted && config) {
+          setAutoCalmEnabled(config.enabled);
+          setAutoCalmThreshold(String(config.threshold));
+          setAutoCalmProtocol(config.defaultProtocol);
+          setAutoCalmIntensity(config.defaultIntensity);
+        }
+      })
+      .catch(() => {});
+    return () => { mounted = false; };
+  }, [firebase?.deviceId]);
   const [connectionSnapshot, setConnectionSnapshot] = useState<
     ReturnType<typeof bleManager.getConnections> | undefined
   >(bleManager.getConnections?.());
@@ -593,6 +614,80 @@ export default function Settings() {
         </View>
       </View>
 
+      {/* Auto-Calm */}
+      <View style={ui.section}>
+        <Text style={[ui.sectionTitle, { color: theme.textDark }]}>Auto-Calm</Text>
+        <Text style={[ui.hint, { color: theme.textMuted, marginBottom: 8 }]}>
+          When anxiety score exceeds the threshold, automatically start a therapy session.
+        </Text>
+        <View style={ui.settingRow}>
+          <Text style={[ui.settingLabel, { color: theme.textDark }]}>Auto-Calm on</Text>
+          <Switch
+            value={autoCalmEnabled}
+            onValueChange={(v) => {
+              setAutoCalmEnabled(v);
+              if (firebase?.deviceId) writeDeviceConfig(firebase.deviceId, { enabled: v }).catch(() => {});
+            }}
+            trackColor={{ true: theme.primary, false: undefined }}
+            thumbColor={Platform.OS === "android" ? (autoCalmEnabled ? theme.primary : undefined) : undefined}
+          />
+        </View>
+        {autoCalmEnabled && (
+          <>
+            <Text style={[ui.label, { color: theme.textMuted, marginTop: 12 }]}>Threshold (0–100)</Text>
+            <TextInput
+              keyboardType="numeric"
+              style={[ui.textInput, { backgroundColor: theme.card, borderColor: theme.border, color: theme.textDark, marginTop: 6 }]}
+              value={autoCalmThreshold}
+              onChangeText={(t) => setAutoCalmThreshold(numericOnly(t))}
+              onBlur={() => {
+                const n = Math.min(100, Math.max(0, parseInt(autoCalmThreshold, 10) || 70));
+                setAutoCalmThreshold(String(n));
+                if (firebase?.deviceId) writeDeviceConfig(firebase.deviceId, { threshold: n }).catch(() => {});
+              }}
+              placeholder="70"
+              placeholderTextColor={theme.textMuted}
+            />
+            <Text style={[ui.label, { color: theme.textMuted, marginTop: 12 }]}>Default protocol</Text>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 6 }}>
+              {PROTOCOLS.slice(0, 8).map((p) => (
+                <TouchableOpacity
+                  key={p.id}
+                  onPress={() => {
+                    setAutoCalmProtocol(p.id);
+                    if (firebase?.deviceId) writeDeviceConfig(firebase.deviceId, { defaultProtocol: p.id }).catch(() => {});
+                  }}
+                  style={[
+                    { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1 },
+                    autoCalmProtocol === p.id ? { backgroundColor: theme.primary, borderColor: theme.primary } : { backgroundColor: theme.card, borderColor: theme.border },
+                  ]}
+                >
+                  <Text style={{ color: autoCalmProtocol === p.id ? "#000" : theme.textDark, fontSize: 12, fontWeight: "600" }}>{p.name}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <Text style={[ui.label, { color: theme.textMuted, marginTop: 12 }]}>Default intensity (1–5)</Text>
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 6 }}>
+              {[1, 2, 3, 4, 5].map((i) => (
+                <TouchableOpacity
+                  key={i}
+                  onPress={() => {
+                    setAutoCalmIntensity(i);
+                    if (firebase?.deviceId) writeDeviceConfig(firebase.deviceId, { defaultIntensity: i }).catch(() => {});
+                  }}
+                  style={[
+                    { paddingVertical: 10, paddingHorizontal: 14, borderRadius: 8, borderWidth: 1 },
+                    autoCalmIntensity === i ? { backgroundColor: theme.primary, borderColor: theme.primary } : { backgroundColor: theme.card, borderColor: theme.border },
+                  ]}
+                >
+                  <Text style={{ color: autoCalmIntensity === i ? "#000" : theme.textDark, fontWeight: "700" }}>{i}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </>
+        )}
+      </View>
+
       {/* Alerts & Notifications */}
       <View style={ui.section}>
         <Text style={[ui.sectionTitle, { color: theme.textDark }]}>Alerts & Notifications</Text>
@@ -642,6 +737,22 @@ export default function Settings() {
         <Text style={[ui.hint, { color: theme.textMuted, marginTop: 8 }]}>
           The app automatically checks for updates on launch. Tap here to check manually.
         </Text>
+      </View>
+
+      {/* Sign out */}
+      <View style={ui.section}>
+        <TouchableOpacity
+          style={[ui.ghostBtn, { borderColor: theme.border, backgroundColor: theme.card }]}
+          onPress={async () => {
+            try {
+              await firebase?.signOut();
+            } catch (e) {
+              console.warn("Sign out failed", e);
+            }
+          }}
+        >
+          <Text style={[ui.ghostBtnText, { color: theme.orange }]}>Sign out</Text>
+        </TouchableOpacity>
       </View>
 
       {/* Actions */}

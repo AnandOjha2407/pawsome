@@ -34,7 +34,7 @@ export type TutorialStep = {
   };
   // If target is a component, use a callback to measure
   measureTarget?: () => Promise<{ x: number; y: number; width: number; height: number }>;
-  screen?: "home" | "dashboard" | "pairing" | "bondai" | "settings";
+  screen?: "home" | "dashboard" | "pairing" | "settings";
 };
 
 type Props = {

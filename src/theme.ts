@@ -6,8 +6,8 @@
  */
 
 export const COLORS = {
-  background: "#0E1217", // Kept as requested
-  card: "#13161C", // Slightly darker, metallic feel
+  background: "#0D1117", // DARYX theme
+  card: "#161B22", // DARYX card
   cardElevated: "#1A1F29",
   border: "rgba(0, 240, 255, 0.3)", // Cyan glow border
   borderStrong: "#00F0FF", // Neon Cyan

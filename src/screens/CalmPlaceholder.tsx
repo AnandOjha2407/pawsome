@@ -14,7 +14,7 @@ import { useTheme } from "../ThemeProvider";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useFirebase } from "../context/FirebaseContext";
 import { PROTOCOLS } from "../firebase/firebase";
-import { bleManager } from "../ble/BLEManager";
+import { bleManager, THERAPY } from "../ble/BLEManager";
 
 const DURATIONS = [30, 60, 90, 120];
 
@@ -30,6 +30,21 @@ export default function CalmPlaceholder() {
   const deviceId = firebase?.deviceId;
   const vestConnected = (bleManager as any)?.getConnections?.()?.connected?.vest ?? false;
 
+  /** Map app protocol 1–8 to BLE therapy codes (0x00–0x0D) */
+  const protocolToBLECode = (p: number): number => {
+    const map: Record<number, number> = {
+      1: THERAPY.CALM,       // Heartbeat Rhythm
+      2: THERAPY.CALM,       // Breathing Pulse
+      3: THERAPY.MASSAGE,    // Spine Wave
+      4: THERAPY.CALM,       // Comfort Hold
+      5: THERAPY.CALM,       // Anxiety Wrap
+      6: THERAPY.CALM,       // Progressive Calm
+      7: THERAPY.CALM,       // Focus Pattern
+      8: THERAPY.SLEEP,      // Sleep Inducer
+    };
+    return map[p] ?? THERAPY.CALM;
+  };
+
   const handleStart = async () => {
     setSending(true);
     try {
@@ -38,10 +53,11 @@ export default function CalmPlaceholder() {
         if (id) Alert.alert("Sent", "Calm command sent to harness via Firebase.");
         else Alert.alert("Error", "Failed to send command.");
       } else if (vestConnected && typeof (bleManager as any).sendTherapyCommand === "function") {
-        const { THERAPY } = await import("../ble/BLEManager");
-        const code = THERAPY.CALM;
+        const code = protocolToBLECode(protocol);
+        const intensityByte = Math.round((intensity / 5) * 255);
+        await (bleManager as any).setVestIntensity?.(intensityByte);
         const ok = await (bleManager as any).sendTherapyCommand(code);
-        if (ok) Alert.alert("Sent", "Calm signal sent via BLE.");
+        if (ok) Alert.alert("Sent", "Calm signal sent via BLE (protocol & intensity).");
         else Alert.alert("Error", "Failed to send.");
       } else {
         Alert.alert("Not Connected", "Pair harness (BLE) or set Device ID in Settings.");
@@ -61,7 +77,6 @@ export default function CalmPlaceholder() {
         if (id) Alert.alert("Sent", "Emergency stop sent.");
         else Alert.alert("Error", "Failed to send stop.");
       } else if (vestConnected && typeof (bleManager as any).sendTherapyCommand === "function") {
-        const { THERAPY } = await import("../ble/BLEManager");
         const ok = await (bleManager as any).sendTherapyCommand(THERAPY.STOP);
         if (ok) Alert.alert("Sent", "Therapy stopped.");
         else Alert.alert("Error", "Failed to stop.");

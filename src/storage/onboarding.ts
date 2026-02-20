@@ -4,7 +4,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 const ONBOARDING_COMPLETE_KEY = "@onboarding_complete_v1";
 const PAGE_ONBOARDING_KEY = "@page_onboarding_v1";
 
-export type PageOnboardingKey = "home" | "dashboard" | "bondai" | "settings";
+export type PageOnboardingKey = "home" | "dashboard" | "settings";
 
 export async function isOnboardingComplete(): Promise<boolean> {
   try {

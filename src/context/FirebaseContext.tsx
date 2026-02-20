@@ -4,23 +4,18 @@ import {
   sendCalmCommand,
   sendStopCommand,
   LiveState,
+  getFcmToken,
+  saveFcmToken,
 } from "../firebase/firebase";
-
-const MOCK_LIVE: LiveState = {
-  state: "CALM",
-  anxietyScore: 22,
-  confidence: 88,
-  activityLevel: 3,
-  breathingRate: 18,
-  circuitTemp: 31.2,
-  batteryPercent: 85,
-  connectionType: "wifi",
-  therapyActive: "NONE",
-  lastUpdated: Math.floor(Date.now() / 1000),
-};
+import auth, { FirebaseAuthTypes } from "@react-native-firebase/auth";
 import { getDeviceId } from "../storage/deviceId";
 
 type FirebaseContextValue = {
+  user: FirebaseAuthTypes.User | null;
+  authLoading: boolean;
+  signIn: (email: string, password: string) => Promise<void>;
+  signUp: (email: string, password: string) => Promise<void>;
+  signOut: () => Promise<void>;
   deviceId: string | null;
   setDeviceId: (id: string | null) => void;
   liveState: LiveState | null;
@@ -33,10 +28,44 @@ type FirebaseContextValue = {
 const FirebaseContext = createContext<FirebaseContextValue | null>(null);
 
 export function FirebaseProvider({ children }: { children: React.ReactNode }) {
+  const [user, setUser] = useState<FirebaseAuthTypes.User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [deviceId, setDeviceIdState] = useState<string | null>(null);
   const [liveState, setLiveState] = useState<LiveState | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let unsub: (() => void) | undefined;
+    try {
+      unsub = auth().onAuthStateChanged((u) => {
+        setUser(u ?? null);
+        setAuthLoading(false);
+      });
+    } catch (e) {
+      setAuthLoading(false);
+    }
+    return () => unsub?.();
+  }, []);
+
+  useEffect(() => {
+    if (!user?.uid) return;
+    getFcmToken()
+      .then((token) => {
+        if (token) return saveFcmToken(user.uid, token);
+      })
+      .catch(() => {});
+  }, [user?.uid]);
+
+  const signIn = useCallback(async (email: string, password: string) => {
+    await auth().signInWithEmailAndPassword(email, password);
+  }, []);
+  const signUp = useCallback(async (email: string, password: string) => {
+    await auth().createUserWithEmailAndPassword(email, password);
+  }, []);
+  const signOut = useCallback(async () => {
+    await auth().signOut();
+  }, []);
 
   const setDeviceId = useCallback(async (id: string | null) => {
     setDeviceIdState(id);
@@ -51,17 +80,22 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
     (async () => {
       try {
         const id = await getDeviceId();
-        if (mounted) setDeviceIdState(id);
+        if (!mounted) return;
+        setDeviceIdState(id ?? null);
 
-        if (id) {
-          unsub = subscribeLiveState(id, (data) => {
-            if (mounted) {
-              setLiveState(data ?? MOCK_LIVE);
-              setError(null);
-            }
-          });
+        if (id && typeof id === "string" && id.trim().length > 0) {
+          try {
+            unsub = subscribeLiveState(id, (data) => {
+              if (mounted) {
+                setLiveState(data ?? null);
+                setError(null);
+              }
+            });
+          } catch (subErr: any) {
+            if (mounted) setLiveState(null);
+          }
         } else {
-          if (mounted) setLiveState(null);
+          setLiveState(null);
         }
       } catch (e: any) {
         if (mounted) {
@@ -75,7 +109,9 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
 
     return () => {
       mounted = false;
-      unsub?.();
+      try {
+        unsub?.();
+      } catch (_) {}
     };
   }, [deviceId]);
 
@@ -103,6 +139,11 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
   }, [deviceId]);
 
   const value: FirebaseContextValue = {
+    user,
+    authLoading,
+    signIn,
+    signUp,
+    signOut,
     deviceId,
     setDeviceId,
     liveState,

@@ -1,9 +1,7 @@
-import { registerRootComponent } from 'expo';
-global.Buffer = global.Buffer || require('buffer').Buffer;
+import { registerRootComponent } from "expo";
+global.Buffer = global.Buffer || require("buffer").Buffer;
 
-import App from './App';
-
-// registerRootComponent calls AppRegistry.registerComponent('main', () => App);
-// It also ensures that whether you load the app in Expo Go or in a native build,
-// the environment is set up appropriately
-registerRootComponent(App);
+// Expo Router is the main entry (see package.json "main": "expo-router/entry").
+// This file is a fallback: register the app root layout if loaded.
+import RootLayout from "./app/_layout";
+registerRootComponent(RootLayout);

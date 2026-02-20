@@ -58,6 +58,7 @@ const VEST_COMMAND_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";  // WRITE - th
 const VEST_INTENSITY_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a9";  // WRITE - 0-255
 const VEST_HEARTBEAT_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26aa";  // WRITE - owner BPM
 const VEST_STATUS_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26ab";     // READ/NOTIFY
+const VEST_WIFI_PROVISION_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26ac"; // WRITE - WiFi SSID+password (setup only)
 
 // ============== THERAPY COMMAND CODES ==============
 // Based on NEW_REQUIREMENTS.md - Therapy Command Codes
@@ -1561,6 +1562,41 @@ class BLEManagerReal extends SimpleEmitter {
     }
   }
 
+  /**
+   * WiFi provisioning (BLE setup only). Write SSID + password to harness, then disconnect.
+   * Per requirements: BLE is used for first-time WiFi setup only.
+   */
+  async writeWifiCredentials(ssid: string, password: string): Promise<boolean> {
+    const vest = this.devices.vest;
+    if (!vest) {
+      this.log("Vest not connected - cannot provision WiFi");
+      return false;
+    }
+    try {
+      const isConnected = await vest.isConnected();
+      if (!isConnected) {
+        this.log("Vest not connected");
+        return false;
+      }
+      const payload = JSON.stringify({ ssid: ssid.trim(), password: password.trim() });
+      const base64 = Buffer.from(payload, "utf8").toString("base64");
+      await vest.writeCharacteristicWithResponseForService(
+        VEST_SERVICE_UUID,
+        VEST_WIFI_PROVISION_UUID,
+        base64
+      );
+      this.log("WiFi credentials written; disconnecting after provisioning.");
+      await vest.cancelConnection();
+      this.connectedRoles.vest = false;
+      if (this.devices.vest === vest) delete this.devices.vest;
+      this.emitConnections();
+      return true;
+    } catch (e: any) {
+      this.log("WiFi provision failed: " + (e?.message ?? e));
+      return false;
+    }
+  }
+
   // Send vest command code (0x00-0x0D) - legacy method, now uses sendTherapyCommand
   async writeVestCommandCode(commandCode: number): Promise<void> {
     // Use new sendTherapyCommand method
@@ -2158,30 +2194,6 @@ class BLEManagerReal extends SimpleEmitter {
     const mins = (Date.now() - this.sessionStart) / 60000;
 
     s.durationMin = Math.max(1, Math.round(mins));
-
-    // Save bond score record when session stops
-    // Import dynamically to avoid circular dependencies
-    import("../storage/analytics").then(({ saveBondScoreRecord }) => {
-      try {
-        const record = {
-          id: s.id,
-          timestamp: Date.now(),
-          date: s.date,
-          bondScore: this.sleepScore, // Already 0-100 scale
-          recoveryScore: this.recoveryScore,
-          strainScore: this.strainScore,
-          durationMinutes: s.durationMin,
-        };
-        saveBondScoreRecord(record).catch((err) => {
-          this.log(`Failed to save bond score record: ${err?.message ?? err}`);
-        });
-      } catch (err: any) {
-        this.log(`Error creating bond score record: ${err?.message ?? err}`);
-      }
-    }).catch((err) => {
-      this.log(`Failed to import analytics module: ${err?.message ?? err}`);
-    });
-
     this.emit("training_stopped", s);
   }
 

@@ -3,12 +3,34 @@ import { MaterialIcons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
 import { ThemeProvider, useTheme } from "../src/ThemeProvider";
-import { FirebaseProvider } from "../src/context/FirebaseContext";
-import { useEffect } from "react";
-import { Platform, AppState } from "react-native";
+import { FirebaseProvider, useFirebase } from "../src/context/FirebaseContext";
+import { useEffect, useState } from "react";
+import { Platform, AppState, View, ActivityIndicator } from "react-native";
 import * as SystemUI from "expo-system-ui";
 import { bleManager } from "../src/ble/BLEManager";
 import { loadPairedDevices } from "../src/storage/pairedDevices";
+import Login from "../src/screens/Login";
+import SignUp from "../src/screens/SignUp";
+
+function AuthGate({ children }: { children: React.ReactNode }) {
+  const firebase = useFirebase();
+  const [authScreen, setAuthScreen] = useState<"login" | "signup">("login");
+  if (firebase?.authLoading) {
+    return (
+      <View style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#0D1117" }}>
+        <ActivityIndicator size="large" color="#00F0FF" />
+      </View>
+    );
+  }
+  if (!firebase?.user) {
+    return authScreen === "login" ? (
+      <Login onSignUp={() => setAuthScreen("signup")} />
+    ) : (
+      <SignUp onBack={() => setAuthScreen("login")} />
+    );
+  }
+  return <>{children}</>;
+}
 
 function TabsNavigator() {
   const { theme } = useTheme();
@@ -181,7 +203,9 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <ThemeProvider>
           <FirebaseProvider>
-            <TabsNavigator />
+            <AuthGate>
+              <TabsNavigator />
+            </AuthGate>
           </FirebaseProvider>
         </ThemeProvider>
       </SafeAreaProvider>

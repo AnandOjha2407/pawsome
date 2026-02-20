@@ -1,5 +1,5 @@
-// src/screens/Dashboard.tsx — Live Dashboard per v1 guide
-import React, { useState } from "react";
+// src/screens/Dashboard.tsx — Live Dashboard per DARYX requirements
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   ScrollView,
   ActivityIndicator,
   Alert,
+  Animated,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useTheme } from "../ThemeProvider";
@@ -24,13 +25,19 @@ const STATE_EMOJI: Record<string, string> = {
   ACTIVE: "🏃",
 };
 
-const STATE_COLORS: Record<string, string> = {
-  SLEEPING: "#58A6FF",
-  CALM: "#3FB950",
-  ALERT: "#D29922",
-  ANXIOUS: "#A855F7",
-  ACTIVE: "#F0883E",
+const STATE_GLOW_COLORS: Record<string, string> = {
+  SLEEPING: "#58A6FF", // Blue
+  CALM: "#3FB950",    // Green
+  ALERT: "#D29922",   // Amber
+  ANXIOUS: "#A855F7", // Purple (animated)
+  ACTIVE: "#F0883E",  // Orange
 };
+
+function anxietyBarColor(score: number): string {
+  if (score <= 33) return "#3FB950";
+  if (score <= 66) return "#D29922";
+  return "#F85149";
+}
 
 export default function Dashboard() {
   const { theme } = useTheme();
@@ -68,10 +75,27 @@ export default function Dashboard() {
 
   const state = live?.state ?? "CALM";
   const emoji = STATE_EMOJI[state] ?? "😌";
-  const stateColor = STATE_COLORS[state] ?? theme.primary;
+  const stateColor = STATE_GLOW_COLORS[state] ?? theme.primary;
   const lastUpdated = live?.lastUpdated
     ? `${Math.round((Date.now() / 1000 - live.lastUpdated))}s ago`
     : "—";
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const isAnxious = state === "ANXIOUS";
+
+  useEffect(() => {
+    if (!isAnxious) {
+      pulseAnim.setValue(1);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1.15, duration: 600, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 0.92, duration: 600, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [isAnxious, pulseAnim]);
 
   if (loading && !live) {
     return (
@@ -100,9 +124,19 @@ export default function Dashboard() {
           </View>
         </View>
 
-        {/* Big state display */}
+        {/* Big state display with glow (ANXIOUS = pulsing purple) */}
         <View style={[styles.stateCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
-          <Text style={[styles.stateEmoji, { opacity: 0.9 }]}>{emoji}</Text>
+          {isAnxious ? (
+            <Animated.View style={[styles.stateEmojiWrap, { transform: [{ scale: pulseAnim }] }]}>
+              <View style={[styles.glowCircle, { backgroundColor: stateColor + "40" }]} />
+              <Text style={styles.stateEmoji}>{emoji}</Text>
+            </Animated.View>
+          ) : (
+            <View style={styles.stateEmojiWrap}>
+              <View style={[styles.glowCircle, { backgroundColor: stateColor + "30" }]} />
+              <Text style={styles.stateEmoji}>{emoji}</Text>
+            </View>
+          )}
           <Text style={[styles.stateLabel, { color: theme.textDark }]}>{state}</Text>
           <Text style={[styles.confidence, { color: theme.textMuted }]}>
             Confidence: {live?.confidence ?? "--"}%
@@ -119,7 +153,7 @@ export default function Dashboard() {
                   styles.barFill,
                   {
                     width: `${Math.min(100, live?.anxietyScore ?? 0)}%`,
-                    backgroundColor: (live?.anxietyScore ?? 0) > 60 ? "#F85149" : theme.primary,
+                    backgroundColor: anxietyBarColor(live?.anxietyScore ?? 0),
                   },
                 ]}
               />
@@ -196,10 +230,20 @@ export default function Dashboard() {
           </TouchableOpacity>
         </View>
 
-        {/* Connection footer */}
+        {/* Calibration status */}
+        {(live?.calibrationDay != null || live?.calibrationComplete) && (
+          <View style={[styles.calibrationRow, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            <Text style={[styles.therapyLabel, { color: theme.textMuted }]}>Calibration:</Text>
+            <Text style={[styles.therapyValue, { color: theme.textDark }]}>
+              {live?.calibrationComplete ? "Complete" : `Day ${live?.calibrationDay ?? 0} of 5`}
+            </Text>
+          </View>
+        )}
+
+        {/* Connection footer + Last Updated */}
         <View style={styles.footer}>
           <Text style={[styles.footerText, { color: theme.textMuted }]}>
-            Connection: {live ? (live.connectionType ?? "wifi") : "—"} | Last update: {lastUpdated}
+            Connection: {live ? (live.connectionType ?? "wifi") : "—"} | Last Updated: {lastUpdated}
           </Text>
         </View>
 
@@ -233,9 +277,24 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 20,
   },
-  stateEmoji: { fontSize: 64, marginBottom: 8 },
+  stateEmojiWrap: { alignItems: "center", justifyContent: "center", marginBottom: 8 },
+  glowCircle: {
+    position: "absolute",
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+  },
+  stateEmoji: { fontSize: 64 },
   stateLabel: { fontSize: 24, fontWeight: "800" },
   confidence: { fontSize: 14, marginTop: 6 },
+  calibrationRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 16,
+  },
   row: { flexDirection: "row", gap: 12, marginBottom: 16 },
   gaugeCard: {
     flex: 1,

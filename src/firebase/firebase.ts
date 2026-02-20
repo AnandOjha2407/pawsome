@@ -5,6 +5,7 @@
 import database from "@react-native-firebase/database";
 import firestore from "@react-native-firebase/firestore";
 import auth from "@react-native-firebase/auth";
+import messaging from "@react-native-firebase/messaging";
 
 export type LiveState = {
   state: "SLEEPING" | "CALM" | "ALERT" | "ANXIOUS" | "ACTIVE";
@@ -17,6 +18,11 @@ export type LiveState = {
   connectionType: "wifi" | "ble";
   therapyActive: string;
   lastUpdated: number;
+  /** Calibration: 1-5, from device */
+  calibrationDay?: number;
+  calibrationComplete?: boolean;
+  /** Firmware version from device */
+  firmwareVersion?: string;
 };
 
 export type CalmCommand = {
@@ -97,17 +103,21 @@ export async function loadHistory(
   deviceId: string,
   startDate: Date,
   endDate: Date,
-  limit = 50
+  limit = 50,
+  startAfterTimestamp?: Date | import("@react-native-firebase/firestore").FirebaseFirestore.Timestamp
 ) {
-  const snap = await firestore()
+  let q = firestore()
     .collection("devices")
     .doc(deviceId)
     .collection("history")
     .where("timestamp", ">=", startDate)
     .where("timestamp", "<=", endDate)
     .orderBy("timestamp", "desc")
-    .limit(limit)
-    .get();
+    .limit(limit);
+  if (startAfterTimestamp != null) {
+    q = q.startAfter(startAfterTimestamp) as any;
+  }
+  const snap = await q.get();
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
@@ -127,4 +137,64 @@ export async function loadAlerts(
     .limit(limit)
     .get();
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+/** Auto-calm config written to devices/{deviceId}/config */
+export type AutoCalmConfig = {
+  enabled: boolean;
+  threshold: number; // 0-100
+  defaultProtocol: number;
+  defaultIntensity: number;
+};
+
+export async function writeDeviceConfig(
+  deviceId: string,
+  config: Partial<AutoCalmConfig>
+): Promise<void> {
+  const ref = firestore()
+    .collection("devices")
+    .doc(deviceId)
+    .collection("config")
+    .doc("autoCalm");
+  await ref.set({ ...config, updatedAt: firestore.FieldValue.serverTimestamp() }, { merge: true });
+}
+
+export async function loadDeviceConfig(
+  deviceId: string
+): Promise<AutoCalmConfig | null> {
+  const doc = await firestore()
+    .collection("devices")
+    .doc(deviceId)
+    .collection("config")
+    .doc("autoCalm")
+    .get();
+  const data = doc.data();
+  if (!data) return null;
+  return {
+    enabled: !!data.enabled,
+    threshold: typeof data.threshold === "number" ? data.threshold : 70,
+    defaultProtocol: typeof data.defaultProtocol === "number" ? data.defaultProtocol : 1,
+    defaultIntensity: typeof data.defaultIntensity === "number" ? data.defaultIntensity : 3,
+  };
+}
+
+/** Store FCM token for push notifications (users/{uid}) */
+export async function saveFcmToken(uid: string, token: string): Promise<void> {
+  await firestore()
+    .collection("users")
+    .doc(uid)
+    .set({ fcmToken: token, fcmTokenUpdatedAt: firestore.FieldValue.serverTimestamp() }, { merge: true });
+}
+
+/** Request FCM permission and return token if granted. Returns null on any error. */
+export async function getFcmToken(): Promise<string | null> {
+  try {
+    const authStatus = await messaging().requestPermission();
+    if (authStatus !== messaging.AuthorizationStatus.AUTHORIZED && authStatus !== messaging.AuthorizationStatus.PROVISIONAL) {
+      return null;
+    }
+    return await messaging().getToken();
+  } catch {
+    return null;
+  }
 }

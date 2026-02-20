@@ -4,7 +4,7 @@ export default {
     slug: "doggpt",
     version: "1.0.0",
     orientation: "portrait",
-    icon: "./assets/images/intro_logo1.png",
+    icon: "./assets/images/intro_logo2.png",
 
     scheme: "pawsomeapp",
 
@@ -38,8 +38,8 @@ export default {
       ],
 
       adaptiveIcon: {
-        backgroundColor: "#0F172A",
-        foregroundImage: "./assets/images/intro_logo1.png"
+        backgroundColor: "#0D1117",
+        foregroundImage: "./assets/images/intro_logo2.png"
       },
 
       edgeToEdgeEnabled: true,
@@ -69,14 +69,17 @@ export default {
         {
           image: "./assets/images/intro_logo2.png",
           resizeMode: "contain",
-          backgroundColor: "#0F172A",
+          backgroundColor: "#0D1117",
           dark: {
-            backgroundColor: "#0F172A"
+            backgroundColor: "#0D1117"
           }
         }
       ],
-      "@react-native-firebase/app",   // add this
+      "@react-native-firebase/app",
       "@react-native-firebase/auth",
+      "@react-native-firebase/database",
+      "@react-native-firebase/firestore",
+      "@react-native-firebase/messaging",
       "react-native-ble-plx",
       "expo-updates"
     ],
