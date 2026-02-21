@@ -845,12 +845,12 @@ export default function Settings() {
         <View style={ui.settingRow}>
           <Text style={[ui.label, { color: theme.textMuted }]}>Calibration</Text>
           <Text style={[ui.valueText, { color: theme.textDark }]}>
-            {firebase?.liveState?.calibrationComplete ? "Complete" : firebase?.liveState?.calibrationDay != null ? `Day ${firebase.liveState.calibrationDay} of 5` : "—"}
+            {firebase?.liveState?.calibrationComplete ? "Complete" : firebase?.liveState?.calibrationDay != null ? `Day ${firebase?.liveState?.calibrationDay} of 5` : "—"}
           </Text>
         </View>
         <View style={ui.settingRow}>
           <Text style={[ui.label, { color: theme.textMuted }]}>WiFi status</Text>
-          <Text style={[ui.valueText, { color: theme.textDark }]}>{firebase?.liveState?.connectionType ? firebase.liveState.connectionType.toUpperCase() : "—"}</Text>
+          <Text style={[ui.valueText, { color: theme.textDark }]}>{firebase?.liveState?.connectionType ? firebase?.liveState?.connectionType?.toUpperCase() : "—"}</Text>
         </View>
         <View style={{ flexDirection: "row", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
           <TouchableOpacity style={[ui.primaryBtn, { backgroundColor: theme.primary }]} onPress={() => openPairingManager("vest")}>

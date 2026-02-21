@@ -361,15 +361,16 @@ export async function loadDogProfile(uid: string): Promise<DogProfile | null> {
 }
 
 export async function saveDogProfile(uid: string, profile: Partial<DogProfile>): Promise<void> {
+  const payload: Record<string, unknown> = { updatedAt: firestore.FieldValue.serverTimestamp() };
+  for (const [k, v] of Object.entries(profile)) {
+    if (v !== undefined && v !== null && (typeof v !== "number" || Number.isFinite(v))) payload[k] = v;
+  }
   await firestore()
     .collection("users")
     .doc(uid)
     .collection("profile")
     .doc("dog")
-    .set(
-      { ...profile, updatedAt: firestore.FieldValue.serverTimestamp() },
-      { merge: true }
-    );
+    .set(payload, { merge: true });
 }
 
 /** Request FCM permission and return token if granted. Returns null on any error. */

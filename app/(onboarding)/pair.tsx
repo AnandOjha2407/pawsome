@@ -12,7 +12,7 @@ export default function OnboardingPairScreen() {
       <View style={[styles.footer, { backgroundColor: theme.card, borderTopColor: theme.border }]}>
         <TouchableOpacity
           style={[styles.continueBtn, { backgroundColor: theme.primary }]}
-          onPress={() => router.replace("/(onboarding)/wifi")}
+          onPress={() => router.replace("/wifi" as any)}
         >
           <Text style={styles.continueBtnText}>Continue to WiFi setup</Text>
         </TouchableOpacity>

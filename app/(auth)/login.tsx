@@ -30,14 +30,12 @@ export default function AuthLoginScreen() {
       <Login
         onSignUp={() => router.push("/signup" as any)}
       />
-      {__DEV__ && (
-        <TouchableOpacity
-          onPress={handleSkip}
-          style={[styles.skipBtn, { borderColor: theme.border }]}
-        >
-          <Text style={[styles.skipText, { color: theme.textMuted }]}>Skip login (dev)</Text>
-        </TouchableOpacity>
-      )}
+      <TouchableOpacity
+        onPress={handleSkip}
+        style={[styles.skipBtn, { borderColor: theme.border }]}
+      >
+        <Text style={[styles.skipText, { color: theme.textMuted }]}>Skip login (for testing)</Text>
+      </TouchableOpacity>
     </View>
   );
 }

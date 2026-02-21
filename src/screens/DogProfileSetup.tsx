@@ -43,6 +43,7 @@ export default function DogProfileSetup() {
           setWeight(profile.weight != null ? String(profile.weight) : "");
         }
       })
+      .catch(() => { if (mounted) setInitialLoad(false); })
       .finally(() => { if (mounted) setInitialLoad(false); });
     return () => { mounted = false; };
   }, [firebase?.user?.uid]);
@@ -57,14 +58,16 @@ export default function DogProfileSetup() {
     if (!uid) return;
     setLoading(true);
     try {
+      const ageNum = age.trim() ? parseInt(age, 10) : NaN;
+      const weightNum = weight.trim() ? parseFloat(weight) : NaN;
       const profile: Partial<DogProfile> = {
         name: n,
         breed: breed.trim() || undefined,
-        age: age.trim() ? parseInt(age, 10) : undefined,
-        weight: weight.trim() ? parseFloat(weight) : undefined,
+        age: Number.isFinite(ageNum) ? ageNum : undefined,
+        weight: Number.isFinite(weightNum) ? weightNum : undefined,
       };
       await saveDogProfile(uid, profile);
-      router.replace("/(onboarding)/pair");
+      router.replace("/pair" as any);
     } catch (e: any) {
       Alert.alert("Error", e?.message ?? "Could not save profile.");
     } finally {
@@ -82,10 +85,21 @@ export default function DogProfileSetup() {
     );
   }
 
+  const handleBackToLogin = async () => {
+    try {
+      await firebase?.signOut?.();
+    } finally {
+      router.replace("/login" as any);
+    }
+  };
+
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={["top"]}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.inner}>
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+          <TouchableOpacity onPress={handleBackToLogin} style={styles.backToLoginBtn}>
+            <Text style={[styles.backToLoginText, { color: theme.textMuted }]}>← Back to login</Text>
+          </TouchableOpacity>
           <Text style={[styles.title, { color: theme.textDark }]}>Dog Profile</Text>
           <Text style={[styles.subtitle, { color: theme.textMuted }]}>Tell us about your dog</Text>
           <Text style={[styles.label, { color: theme.textMuted }]}>Name (required)</Text>
@@ -134,7 +148,7 @@ export default function DogProfileSetup() {
               onPress={async () => {
                 if (firebase?.setDeviceId) {
                   await firebase.setDeviceId(MOCK_DEVICE_ID);
-                  router.replace("/(tabs)/dashboard");
+                  router.replace("/dashboard" as any);
                 }
               }}
               style={[styles.btn, styles.mockBtn, { borderColor: theme.border }]}
@@ -160,4 +174,6 @@ const styles = StyleSheet.create({
   btn: { padding: 16, borderRadius: 12, alignItems: "center", marginTop: 8 },
   btnText: { color: "#fff", fontSize: 16, fontWeight: "600" },
   mockBtn: { backgroundColor: "transparent", borderWidth: 1, marginTop: 16 },
+  backToLoginBtn: { alignSelf: "flex-start", marginBottom: 16 },
+  backToLoginText: { fontSize: 15, fontWeight: "600" },
 });

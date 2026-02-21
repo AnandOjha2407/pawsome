@@ -8,14 +8,19 @@ import {
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
+  Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { useTheme } from "../ThemeProvider";
+import { useFirebase } from "../context/FirebaseContext";
+import { loadPairedDevices } from "../storage/pairedDevices";
+import { MOCK_DEVICE_ID } from "../mock/mockData";
 
 export default function WiFiProvisioning() {
   const { theme } = useTheme();
   const router = useRouter();
+  const firebase = useFirebase();
   const [ssid, setSsid] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -23,8 +28,14 @@ export default function WiFiProvisioning() {
   const handleFinish = async () => {
     setLoading(true);
     try {
-      // TODO: send WiFi credentials to device over BLE if needed; for now just go to main app
-      router.replace("/(tabs)/dashboard");
+      const paired = await loadPairedDevices().catch(() => ({}));
+      const deviceId = paired?.vest?.id ?? MOCK_DEVICE_ID;
+      if (firebase?.setDeviceId) {
+        await firebase.setDeviceId(deviceId);
+      }
+      router.replace("/dashboard" as any);
+    } catch (e: any) {
+      Alert.alert("Error", e?.message ?? "Could not continue.");
     } finally {
       setLoading(false);
     }
