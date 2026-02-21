@@ -1498,7 +1498,7 @@ export default function Home({ navigation }: Props) {
             />
           </View>
           <View>
-            <Text style={styles.appName}>Pawsome</Text>
+            <Text style={styles.appName}>DARYX</Text>
             <Text style={styles.appSub}>Calm insights for better training</Text>
           </View>
         </View>

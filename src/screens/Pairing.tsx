@@ -13,6 +13,7 @@ import {
   Platform,
   Linking,
   PermissionsAndroid,
+  Modal,
 } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useRoute } from "@react-navigation/native";
@@ -44,6 +45,7 @@ export default function Pairing() {
   const [isScanning, setIsScanning] = useState(false);
   const [devices, setDevices] = useState<DeviceItem[]>([]);
   const [btOn, setBtOn] = useState(true);
+  const [connectingDeviceId, setConnectingDeviceId] = useState<string | null>(null);
 
   // --------------------------------------------------------------------------------------
   // INIT - Check Bluetooth state and request permissions
@@ -378,12 +380,13 @@ export default function Pairing() {
         return;
       }
 
-      // Show connecting state (optional - could add loading indicator)
+      setConnectingDeviceId(descriptor.id);
       console.log(`Connecting to ${descriptor.name} as ${type}...`);
 
       try {
         await bleManager.connectToScannedDevice(descriptor, type);
       } catch (connectError: any) {
+        setConnectingDeviceId(null);
         console.warn("Connect failed:", connectError);
         const errorMessage = connectError?.message || connectError?.toString() || "Unknown error";
         
@@ -395,6 +398,8 @@ export default function Pairing() {
         Alert.alert("Connection Failed", errorGuidance);
         return;
       }
+
+      setConnectingDeviceId(null);
 
       try {
         await savePairedDevice(type, descriptor);
@@ -408,6 +413,7 @@ export default function Pairing() {
         `Successfully connected to ${descriptor.name} as ${type.toUpperCase()}`
       );
     } catch (err: any) {
+      setConnectingDeviceId(null);
       console.warn("Connect failed:", err);
       const errorMessage = err?.message || err?.toString() || "Unknown error";
       Alert.alert(
@@ -422,14 +428,20 @@ export default function Pairing() {
   // --------------------------------------------------------------------------------------
   const renderItem = ({ item }: { item: DeviceItem }) => {
     const typeInfo = getDeviceTypeInfo(item.name, item.id);
+    const isConnecting = connectingDeviceId === item.id;
 
     return (
       <TouchableOpacity
-        style={styles.deviceRow}
+        style={[styles.deviceRow, isConnecting && styles.deviceRowConnecting]}
         onPress={() => pickRole(item)}
+        disabled={isConnecting}
       >
         <View style={styles.deviceIcon}>
-          <Text style={{ fontSize: 24 }}>{typeInfo.icon}</Text>
+          {isConnecting ? (
+            <ActivityIndicator size="small" color={activeTheme.primary} />
+          ) : (
+            <Text style={{ fontSize: 24 }}>{typeInfo.icon}</Text>
+          )}
         </View>
         <View style={{ flex: 1, marginLeft: 12 }}>
           <Text style={styles.deviceName}>{item.name ?? "Unknown Device"}</Text>
@@ -438,12 +450,16 @@ export default function Pairing() {
             styles.deviceType,
             { color: typeInfo.type ? activeTheme.success : activeTheme.textMuted }
           ]}>
-            {typeInfo.label}
+            {isConnecting ? "Connecting…" : typeInfo.label}
           </Text>
         </View>
 
         <View style={styles.rssiWrap}>
-          <Text style={styles.rssiText}>{item.rssi ?? "-"}</Text>
+          {isConnecting ? (
+            <ActivityIndicator size="small" color={activeTheme.primary} />
+          ) : (
+            <Text style={styles.rssiText}>{item.rssi ?? "-"}</Text>
+          )}
         </View>
       </TouchableOpacity>
     );
@@ -499,6 +515,18 @@ export default function Pairing() {
               </TouchableOpacity>
             )}
           </View>
+
+          {connectingDeviceId ? (
+            <Modal visible transparent animationType="fade">
+              <View style={[styles.connectingOverlay, { backgroundColor: "rgba(0,0,0,0.5)" }]}>
+                <View style={[styles.connectingBox, { backgroundColor: activeTheme.card }]}>
+                  <ActivityIndicator size="large" color={activeTheme.primary} />
+                  <Text style={[styles.connectingText, { color: activeTheme.textDark }]}>Connecting to device…</Text>
+                  <Text style={[styles.connectingSub, { color: activeTheme.textMuted }]}>Please wait</Text>
+                </View>
+              </View>
+            </Modal>
+          ) : null}
 
           <FlatList
             data={devices}
@@ -565,6 +593,9 @@ const createStyles = (theme: Theme) =>
       shadowRadius: 6,
       shadowOffset: { width: 0, height: 2 },
     },
+    deviceRowConnecting: {
+      opacity: 0.85,
+    },
 
     deviceName: { fontWeight: "700", color: theme.textDark },
     deviceSub: { color: theme.textMuted, marginTop: 2, fontSize: 12 },
@@ -590,4 +621,19 @@ const createStyles = (theme: Theme) =>
     empty: { alignItems: "center", padding: 24 },
     emptyText: { fontSize: 16, fontWeight: "700", color: theme.textDark },
     emptySub: { color: theme.textMuted, marginTop: 6 },
+
+    connectingOverlay: {
+      flex: 1,
+      justifyContent: "center",
+      alignItems: "center",
+      padding: 24,
+    },
+    connectingBox: {
+      padding: 28,
+      borderRadius: 16,
+      alignItems: "center",
+      minWidth: 220,
+    },
+    connectingText: { fontSize: 16, fontWeight: "700", marginTop: 14 },
+    connectingSub: { fontSize: 13, marginTop: 4 },
   });

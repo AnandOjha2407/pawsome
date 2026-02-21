@@ -1,4 +1,5 @@
-// src/screens/Dashboard.tsx — Live Dashboard per DARYX requirements
+// src/screens/Dashboard.tsx — Live Dashboard per 5.2 (DARYX requirements)
+// DATA SOURCE: Firebase Realtime DB /devices/{device_id}/live only. BLE is setup-only; all live data from device flows through Firebase.
 import React, { useState, useEffect, useRef } from "react";
 import {
   View,
@@ -17,20 +18,22 @@ import { useRouter } from "expo-router";
 import { useFirebase } from "../context/FirebaseContext";
 import { bleManager } from "../ble/BLEManager";
 
+// State emoji/icon and glow per spec 5.2 — all from device state
 const STATE_EMOJI: Record<string, string> = {
-  SLEEPING: "🌙",
-  CALM: "😌",
-  ALERT: "👀",
-  ANXIOUS: "😟",
-  ACTIVE: "🏃",
+  SLEEPING: "🌙",  // Moon / sleeping face
+  CALM: "😌",      // Relaxed smile
+  ALERT: "👀",     // Eyes / surprised
+  ANXIOUS: "😟",   // Worried face
+  ACTIVE: "🏃",    // Running / playing
 };
 
-const STATE_GLOW_COLORS: Record<string, string> = {
-  SLEEPING: "#58A6FF", // Blue
-  CALM: "#3FB950",    // Green
-  ALERT: "#D29922",   // Amber
-  ANXIOUS: "#A855F7", // Purple (animated)
-  ACTIVE: "#F0883E",  // Orange
+// Glow colors per spec (opacity in hex: 10%=1A, 15%=26, 20%=33)
+const STATE_GLOW: Record<string, string> = {
+  SLEEPING: "#58A6FF1A", // Dim blue 10%
+  CALM: "#3FB95026",     // Soft green 15%
+  ALERT: "#D2992233",    // Amber 20%
+  ANXIOUS: "#A855F733",  // Pulsing purple 20% (animated below)
+  ACTIVE: "#F0883E33",   // Orange 20%
 };
 
 function anxietyBarColor(score: number): string {
@@ -56,31 +59,50 @@ export default function Dashboard() {
     try {
       if (deviceId && firebase?.sendStop) {
         const id = await firebase.sendStop();
-        if (id) Alert.alert("Sent", "Emergency stop command sent.");
-        else Alert.alert("Error", "Failed to send stop command.");
+        if (id) {
+          // Loading stays true until device acknowledges (therapyActive clears) or timeout — see useEffect below
+        } else {
+          Alert.alert("Error", "Failed to send stop command.");
+          setSendingStop(false);
+        }
       } else if (vestConnected && typeof (bleManager as any).sendTherapyCommand === "function") {
         const { THERAPY } = await import("../ble/BLEManager");
         const ok = await (bleManager as any).sendTherapyCommand(THERAPY.STOP);
-        if (ok) Alert.alert("Sent", "Therapy stopped via BLE.");
-        else Alert.alert("Error", "Failed to stop.");
+        if (ok) setSendingStop(false);
+        else {
+          Alert.alert("Error", "Failed to stop.");
+          setSendingStop(false);
+        }
       } else {
-        Alert.alert("Not Connected", "Connect a device or set Device ID in Settings.");
+        Alert.alert("Not Connected", "Set Device ID in Settings for live control (BLE is setup-only).");
+        setSendingStop(false);
       }
     } catch (e: any) {
       Alert.alert("Error", e?.message ?? "Failed to send stop.");
-    } finally {
       setSendingStop(false);
     }
   };
 
-  const state = live?.state ?? "CALM";
+  const state = (live?.state ?? "CALM") as keyof typeof STATE_EMOJI;
   const emoji = STATE_EMOJI[state] ?? "😌";
-  const stateColor = STATE_GLOW_COLORS[state] ?? theme.primary;
+  const glowColor = STATE_GLOW[state] ?? theme.primary + "26";
   const lastUpdated = live?.lastUpdated
     ? `${Math.round((Date.now() / 1000 - live.lastUpdated))}s ago`
     : "—";
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const isAnxious = state === "ANXIOUS";
+  const therapyActive = !!(live?.therapyActive && live.therapyActive !== "NONE" && live.therapyActive !== "");
+
+  // Emergency Stop: loading until device acknowledges (therapyActive → none) or 8s timeout
+  useEffect(() => {
+    if (!sendingStop) return;
+    if (!therapyActive) {
+      setSendingStop(false);
+      return;
+    }
+    const t = setTimeout(() => setSendingStop(false), 8000);
+    return () => clearTimeout(t);
+  }, [sendingStop, therapyActive]);
 
   useEffect(() => {
     if (!isAnxious) {
@@ -108,15 +130,40 @@ export default function Dashboard() {
     );
   }
 
+  // All displayed values from device via Firebase /devices/{device_id}/live
+  const anxietyScore = live?.anxietyScore ?? 0;
+  const activityLevel = live?.activityLevel ?? 0;
+  const breathingRate = live?.breathingRate;
+  const circuitTemp = live?.circuitTemp;
+  const confidence = live?.confidence;
+  const batteryPercent = live?.batteryPercent;
+  const connectionType = live?.connectionType ?? "wifi";
+  const therapyStatusText = live?.therapyActive && live.therapyActive !== "NONE" && live.therapyActive !== ""
+    ? live.therapyActive
+    : "None active";
+
+  const formatTemp = (v: number | undefined | null): string =>
+    v != null && typeof v === "number" ? `${Number(v).toFixed(1)}` : "--";
+  const formatBpm = (v: number | undefined | null): string =>
+    v != null && typeof v === "number" ? `${Math.round(v)}` : "--";
+
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={["top"]}>
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-        {/* Header */}
+        {/* Header: [Dog Name] [Battery] [Signal] — wireframe 5.2 */}
         <View style={styles.header}>
-          <Text style={[styles.headerTitle, { color: theme.textDark }]}>Live Dashboard</Text>
+          <Text style={[styles.headerTitle, { color: theme.textDark }]} numberOfLines={1}>
+            {/* Dog name from profile when available; else default */}
+            My Dog
+          </Text>
           <View style={styles.headerRight}>
             <View style={[styles.badge, { backgroundColor: theme.card }]}>
-              <Text style={{ fontSize: 12, color: theme.textMuted }}>🔋 {live?.batteryPercent ?? "--"}%</Text>
+              <Text style={{ fontSize: 12, color: theme.textMuted }}>🔋 {batteryPercent != null ? `${batteryPercent}%` : "--"}</Text>
+            </View>
+            <View style={[styles.badge, { backgroundColor: theme.card }]}>
+              <Text style={{ fontSize: 12, color: theme.textMuted }}>
+                {connectionType === "wifi" ? "📶 WiFi" : connectionType === "ble" ? "📶 BLE" : "📶 --"}
+              </Text>
             </View>
             <TouchableOpacity onPress={() => router.push("/settings")} style={{ padding: 8 }}>
               <MaterialIcons name="settings" size={24} color={theme.primary} />
@@ -124,88 +171,76 @@ export default function Dashboard() {
           </View>
         </View>
 
-        {/* Big state display with glow (ANXIOUS = pulsing purple) */}
+        {/* Big emoji for state + state name + confidence — all from device */}
         <View style={[styles.stateCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
           {isAnxious ? (
             <Animated.View style={[styles.stateEmojiWrap, { transform: [{ scale: pulseAnim }] }]}>
-              <View style={[styles.glowCircle, { backgroundColor: stateColor + "40" }]} />
+              <View style={[styles.glowCircle, { backgroundColor: glowColor }]} />
               <Text style={styles.stateEmoji}>{emoji}</Text>
             </Animated.View>
           ) : (
             <View style={styles.stateEmojiWrap}>
-              <View style={[styles.glowCircle, { backgroundColor: stateColor + "30" }]} />
+              <View style={[styles.glowCircle, { backgroundColor: glowColor }]} />
               <Text style={styles.stateEmoji}>{emoji}</Text>
             </View>
           )}
           <Text style={[styles.stateLabel, { color: theme.textDark }]}>{state}</Text>
           <Text style={[styles.confidence, { color: theme.textMuted }]}>
-            Confidence: {live?.confidence ?? "--"}%
+            Confidence: {confidence != null ? `${confidence}%` : "--"}
           </Text>
         </View>
 
-        {/* Anxiety & Activity */}
+        {/* Anxiety Score & Activity Level — device data */}
         <View style={styles.row}>
           <View style={[styles.gaugeCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
             <Text style={[styles.gaugeLabel, { color: theme.textMuted }]}>Anxiety Score</Text>
-            <View style={[styles.barBg, { backgroundColor: theme.card }]}>
+            <View style={[styles.barBg, { backgroundColor: theme.background }]}>
               <View
                 style={[
                   styles.barFill,
-                  {
-                    width: `${Math.min(100, live?.anxietyScore ?? 0)}%`,
-                    backgroundColor: anxietyBarColor(live?.anxietyScore ?? 0),
-                  },
+                  { width: `${Math.min(100, anxietyScore)}%`, backgroundColor: anxietyBarColor(anxietyScore) },
                 ]}
               />
             </View>
-            <Text style={[styles.gaugeValue, { color: theme.textDark }]}>
-              {live?.anxietyScore ?? 0}/100
-            </Text>
+            <Text style={[styles.gaugeValue, { color: theme.textDark }]}>{anxietyScore}/100</Text>
           </View>
           <View style={[styles.gaugeCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
             <Text style={[styles.gaugeLabel, { color: theme.textMuted }]}>Activity Level</Text>
-            <View style={[styles.barBg, { backgroundColor: theme.card }]}>
+            <View style={[styles.barBg, { backgroundColor: theme.background }]}>
               <View
                 style={[
                   styles.barFill,
-                  {
-                    width: `${((live?.activityLevel ?? 0) / 10) * 100}%`,
-                    backgroundColor: theme.secondary,
-                  },
+                  { width: `${Math.min(100, (activityLevel / 10) * 100)}%`, backgroundColor: theme.secondary },
                 ]}
               />
             </View>
-            <Text style={[styles.gaugeValue, { color: theme.textDark }]}>
-              {live?.activityLevel ?? 0}/10
-            </Text>
+            <Text style={[styles.gaugeValue, { color: theme.textDark }]}>{activityLevel}/10</Text>
           </View>
         </View>
 
-        {/* Breathing & Temp */}
+        {/* Breathing Rate & Circuit Temp — device data */}
         <View style={[styles.metricsRow, { backgroundColor: theme.card, borderColor: theme.border }]}>
           <View style={styles.metric}>
             <Text style={[styles.metricLabel, { color: theme.textMuted }]}>Breathing Rate</Text>
             <Text style={[styles.metricValue, { color: theme.textDark }]}>
-              {live?.breathingRate ?? "--"} bpm
+              {formatBpm(breathingRate)} bpm
             </Text>
           </View>
           <View style={styles.metric}>
             <Text style={[styles.metricLabel, { color: theme.textMuted }]}>Circuit Temp</Text>
             <Text style={[styles.metricValue, { color: theme.textDark }]}>
-              {live?.circuitTemp ?? "--"} °C
+              {formatTemp(circuitTemp)} °C
             </Text>
           </View>
         </View>
 
-        {/* Therapy status */}
+        {/* Therapy Status — from device */}
         <View style={[styles.therapyRow, { backgroundColor: theme.card, borderColor: theme.border }]}>
           <Text style={[styles.therapyLabel, { color: theme.textMuted }]}>Therapy Status:</Text>
-          <Text style={[styles.therapyValue, { color: theme.textDark }]}>
-            {live?.therapyActive && live.therapyActive !== "NONE" ? live.therapyActive : "None active"}
-          </Text>
+          <Text style={[styles.therapyValue, { color: theme.textDark }]}>{therapyStatusText}</Text>
         </View>
 
-        {/* Actions */}
+        {/* CALM NOW | EMERGENCY STOP — red button always visible; loading until acknowledged */}
         <View style={styles.actions}>
           <TouchableOpacity
             onPress={handleCalmNow}
@@ -230,7 +265,7 @@ export default function Dashboard() {
           </TouchableOpacity>
         </View>
 
-        {/* Calibration status */}
+        {/* Calibration — from device when present */}
         {(live?.calibrationDay != null || live?.calibrationComplete) && (
           <View style={[styles.calibrationRow, { backgroundColor: theme.card, borderColor: theme.border }]}>
             <Text style={[styles.therapyLabel, { color: theme.textMuted }]}>Calibration:</Text>
@@ -240,21 +275,21 @@ export default function Dashboard() {
           </View>
         )}
 
-        {/* Connection footer + Last Updated */}
+        {/* Connection: WiFi | Last update — from device */}
         <View style={styles.footer}>
           <Text style={[styles.footerText, { color: theme.textMuted }]}>
-            Connection: {live ? (live.connectionType ?? "wifi") : "—"} | Last Updated: {lastUpdated}
+            Connection: {live ? (connectionType === "wifi" ? "WiFi" : connectionType.toUpperCase()) : "—"} | Last update: {lastUpdated}
           </Text>
         </View>
 
-        {/* Pair / Set device ID */}
+        {/* BLE is setup-only: prompt to set Device ID or pair for first-time setup */}
         {!deviceId && !vestConnected && (
           <TouchableOpacity
-            onPress={() => router.push("/pairing")}
+            onPress={() => router.push("/settings")}
             style={[styles.pairBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
           >
-            <MaterialCommunityIcons name="bluetooth" size={20} color={theme.primary} />
-            <Text style={[styles.pairBtnText, { color: theme.primary }]}>Pair harness (BLE) or set Device ID in Settings</Text>
+            <MaterialCommunityIcons name="wifi" size={20} color={theme.primary} />
+            <Text style={[styles.pairBtnText, { color: theme.primary }]}>Set Device ID in Settings for live data (BLE is setup-only)</Text>
           </TouchableOpacity>
         )}
       </ScrollView>

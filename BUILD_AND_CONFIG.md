@@ -56,3 +56,13 @@ npx eas build -p android --profile production
 - [ ] Run: `npx eas build -p android --profile preview`.
 
 If anything fails (e.g. Firebase not found), fix the package name and re-download `google-services.json`, then rebuild.
+
+---
+
+## 4. "No firebase app DEFAULT has been created" / Login or Sign up fails
+
+- **Expo Go:** Firebase Auth and Realtime DB use **native** modules. They **do not work in Expo Go**. You must use a **development build** or an **EAS-built APK**:
+  - `npx expo run:android` (local dev build), or  
+  - `npx eas build -p android --profile preview` (then install the APK).
+- **Package name:** `google-services.json` must have `"package_name": "com.pawsomebond.app"` (it was fixed from `"app.config.js"`). If you added the Android app in Firebase with a different package, add an app with `com.pawsomebond.app` and replace `google-services.json`.
+- **Initialization:** The app imports `@react-native-firebase/app` at startup so the default Firebase app exists before Auth is used. No need to call `firebase.initializeApp()` when using React Native Firebase with a dev build and a correct `google-services.json`.

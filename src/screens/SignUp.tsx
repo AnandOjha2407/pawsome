@@ -11,19 +11,24 @@ import {
   Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { MaterialIcons } from "@expo/vector-icons";
 import { useTheme } from "../ThemeProvider";
 import { useFirebase } from "../context/FirebaseContext";
 
-export default function SignUp({ onBack }: { onBack?: () => void }) {
+export default function SignUp({ onBack, onSuccess }: { onBack?: () => void; onSuccess?: () => void }) {
   const { theme } = useTheme();
   const firebase = useFirebase();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const handleSignUp = async () => {
     const e = email.trim();
     const p = password;
+    const cp = confirmPassword;
     if (!e || !p) {
       Alert.alert("Error", "Enter email and password.");
       return;
@@ -32,11 +37,21 @@ export default function SignUp({ onBack }: { onBack?: () => void }) {
       Alert.alert("Error", "Password must be at least 6 characters.");
       return;
     }
+    if (p !== cp) {
+      Alert.alert("Error", "Passwords do not match.");
+      return;
+    }
     setLoading(true);
     try {
       await firebase?.signUp(e, p);
+      onSuccess?.();
     } catch (err: any) {
-      Alert.alert("Sign up failed", err?.message ?? "Could not create account.");
+      const msg = err?.message ?? "Could not create account.";
+      if (msg.toLowerCase().includes("email") && (msg.toLowerCase().includes("use") || msg.toLowerCase().includes("already"))) {
+        Alert.alert("Sign up failed", "This email is already in use. Try logging in instead.");
+      } else {
+        Alert.alert("Sign up failed", msg);
+      }
     } finally {
       setLoading(false);
     }
@@ -57,15 +72,42 @@ export default function SignUp({ onBack }: { onBack?: () => void }) {
           keyboardType="email-address"
           autoComplete="email"
         />
-        <TextInput
-          style={[styles.input, { backgroundColor: theme.card, borderColor: theme.border, color: theme.textDark }]}
-          placeholder="Password (min 6 characters)"
-          placeholderTextColor={theme.textMuted}
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry
-          autoComplete="password-new"
-        />
+        <View style={styles.passwordWrap}>
+          <TextInput
+            style={[styles.input, styles.passwordInput, { backgroundColor: theme.card, borderColor: theme.border, color: theme.textDark }]}
+            placeholder="Password (min 6 characters)"
+            placeholderTextColor={theme.textMuted}
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry={!showPassword}
+            autoComplete="password-new"
+          />
+          <TouchableOpacity
+            style={styles.eyeBtn}
+            onPress={() => setShowPassword((p) => !p)}
+            accessibilityLabel={showPassword ? "Hide password" : "Show password"}
+          >
+            <MaterialIcons name={showPassword ? "visibility-off" : "visibility"} size={24} color={theme.textMuted} />
+          </TouchableOpacity>
+        </View>
+        <View style={styles.passwordWrap}>
+          <TextInput
+            style={[styles.input, styles.passwordInput, { backgroundColor: theme.card, borderColor: theme.border, color: theme.textDark }]}
+            placeholder="Confirm password"
+            placeholderTextColor={theme.textMuted}
+            value={confirmPassword}
+            onChangeText={setConfirmPassword}
+            secureTextEntry={!showConfirmPassword}
+            autoComplete="password-new"
+          />
+          <TouchableOpacity
+            style={styles.eyeBtn}
+            onPress={() => setShowConfirmPassword((p) => !p)}
+            accessibilityLabel={showConfirmPassword ? "Hide password" : "Show password"}
+          >
+            <MaterialIcons name={showConfirmPassword ? "visibility-off" : "visibility"} size={24} color={theme.textMuted} />
+          </TouchableOpacity>
+        </View>
         <TouchableOpacity
           onPress={handleSignUp}
           disabled={loading}
@@ -89,6 +131,9 @@ const styles = StyleSheet.create({
   title: { fontSize: 26, fontWeight: "800", marginBottom: 8 },
   subtitle: { fontSize: 14, marginBottom: 24 },
   input: { borderWidth: 1, borderRadius: 12, padding: 14, marginBottom: 16, fontSize: 16 },
+  passwordWrap: { position: "relative", marginBottom: 16 },
+  passwordInput: { paddingRight: 48 },
+  eyeBtn: { position: "absolute", right: 12, top: 0, bottom: 0, justifyContent: "center" },
   primaryBtn: { padding: 16, borderRadius: 12, alignItems: "center", marginTop: 8 },
   primaryBtnText: { color: "#000", fontWeight: "800", fontSize: 16 },
   linkBtn: { marginTop: 20, alignItems: "center" },

@@ -11,14 +11,16 @@ import {
   Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { MaterialIcons } from "@expo/vector-icons";
 import { useTheme } from "../ThemeProvider";
 import { useFirebase } from "../context/FirebaseContext";
 
-export default function Login({ onSignUp }: { onSignUp?: () => void }) {
+export default function Login({ onSignUp, onSuccess }: { onSignUp?: () => void; onSuccess?: () => void }) {
   const { theme } = useTheme();
   const firebase = useFirebase();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const handleLogin = async () => {
@@ -31,6 +33,7 @@ export default function Login({ onSignUp }: { onSignUp?: () => void }) {
     setLoading(true);
     try {
       await firebase?.signIn(e, p);
+      onSuccess?.();
     } catch (err: any) {
       Alert.alert("Login failed", err?.message ?? "Invalid email or password.");
     } finally {
@@ -53,15 +56,24 @@ export default function Login({ onSignUp }: { onSignUp?: () => void }) {
           keyboardType="email-address"
           autoComplete="email"
         />
-        <TextInput
-          style={[styles.input, { backgroundColor: theme.card, borderColor: theme.border, color: theme.textDark }]}
-          placeholder="Password"
-          placeholderTextColor={theme.textMuted}
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry
-          autoComplete="password"
-        />
+        <View style={styles.passwordWrap}>
+          <TextInput
+            style={[styles.input, styles.passwordInput, { backgroundColor: theme.card, borderColor: theme.border, color: theme.textDark }]}
+            placeholder="Password"
+            placeholderTextColor={theme.textMuted}
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry={!showPassword}
+            autoComplete="password"
+          />
+          <TouchableOpacity
+            style={styles.eyeBtn}
+            onPress={() => setShowPassword((p) => !p)}
+            accessibilityLabel={showPassword ? "Hide password" : "Show password"}
+          >
+            <MaterialIcons name={showPassword ? "visibility-off" : "visibility"} size={24} color={theme.textMuted} />
+          </TouchableOpacity>
+        </View>
         <TouchableOpacity
           onPress={handleLogin}
           disabled={loading}
@@ -85,6 +97,9 @@ const styles = StyleSheet.create({
   title: { fontSize: 26, fontWeight: "800", marginBottom: 8 },
   subtitle: { fontSize: 14, marginBottom: 24 },
   input: { borderWidth: 1, borderRadius: 12, padding: 14, marginBottom: 16, fontSize: 16 },
+  passwordWrap: { position: "relative", marginBottom: 16 },
+  passwordInput: { paddingRight: 48 },
+  eyeBtn: { position: "absolute", right: 12, top: 0, bottom: 0, justifyContent: "center" },
   primaryBtn: { padding: 16, borderRadius: 12, alignItems: "center", marginTop: 8 },
   primaryBtnText: { color: "#000", fontWeight: "800", fontSize: 16 },
   linkBtn: { marginTop: 20, alignItems: "center" },

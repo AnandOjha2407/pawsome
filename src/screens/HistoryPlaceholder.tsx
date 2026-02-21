@@ -1,5 +1,6 @@
-// src/screens/HistoryPlaceholder.tsx — History with Anxiety Timeline, State Distribution, Event Log (50 + load more)
-import React, { useState, useEffect, useCallback } from "react";
+// src/screens/HistoryPlaceholder.tsx — 5.4 History: Anxiety Timeline, State Distribution, Event Log
+// Data from Firestore /devices/{device_id}/history and .../alerts (unique per user via device_id).
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -9,9 +10,10 @@ import {
   ActivityIndicator,
   FlatList,
   Dimensions,
+  Modal,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import Svg, { Polyline, Circle, Line, Path } from "react-native-svg";
+import Svg, { Polyline, Circle, Line, Path, Text as SvgText } from "react-native-svg";
 import { useTheme } from "../ThemeProvider";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useFirebase } from "../context/FirebaseContext";
@@ -27,41 +29,73 @@ const STATE_COLORS: Record<string, string> = {
   ACTIVE: "#F0883E",
 };
 
-type DateFilter = "today" | "yesterday" | "week" | "month";
+type DateFilter = "today" | "yesterday" | "week" | "month" | "custom";
 
-function getDateRange(filter: DateFilter): { start: Date; end: Date } {
-  const end = new Date();
+function getDateRange(
+  filter: DateFilter,
+  customStart: Date | null,
+  customEnd: Date | null
+): { start: Date; end: Date } {
+  const now = new Date();
+  if (filter === "custom" && customStart && customEnd) {
+    return { start: new Date(customStart), end: new Date(customEnd) };
+  }
+  if (filter === "custom") {
+    const end = new Date(now);
+    const start = new Date(now);
+    start.setDate(start.getDate() - 6);
+    start.setHours(0, 0, 0, 0);
+    return { start, end };
+  }
+  let end = new Date(now);
   let start: Date;
   if (filter === "today") {
     start = new Date(end.getFullYear(), end.getMonth(), end.getDate());
   } else if (filter === "yesterday") {
     start = new Date(end.getFullYear(), end.getMonth(), end.getDate() - 1);
-    const endY = new Date(start);
-    endY.setDate(start.getDate() + 1);
-    return { start, end: endY };
+    end = new Date(start);
+    end.setDate(start.getDate() + 1);
+    return { start, end };
   } else if (filter === "week") {
     start = new Date(end);
-    start.setDate(start.getDate() - 7);
-  } else {
+    start.setDate(start.getDate() - 6);
+    start.setHours(0, 0, 0, 0);
+  } else if (filter === "month") {
     start = new Date(end);
     start.setMonth(start.getMonth() - 1);
+    start.setDate(1);
+    start.setHours(0, 0, 0, 0);
+  } else {
+    start = new Date(end);
+    start.setDate(start.getDate() - 6);
   }
   return { start, end };
 }
+
+const CUSTOM_PRESETS: { label: string; days: number }[] = [
+  { label: "Last 7 days", days: 7 },
+  { label: "Last 14 days", days: 14 },
+  { label: "Last 30 days", days: 30 },
+  { label: "Last 90 days", days: 90 },
+];
 
 export default function HistoryPlaceholder() {
   const { theme } = useTheme();
   const firebase = useFirebase();
   const [filter, setFilter] = useState<DateFilter>("week");
+  const [customStart, setCustomStart] = useState<Date | null>(null);
+  const [customEnd, setCustomEnd] = useState<Date | null>(null);
+  const [customModalVisible, setCustomModalVisible] = useState(false);
   const [history, setHistory] = useState<any[]>([]);
   const [alerts, setAlerts] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [lastTimestamp, setLastTimestamp] = useState<Date | null>(null);
+  const loadMoreTriggered = useRef(false);
 
   const deviceId = firebase?.deviceId;
-  const { start, end } = getDateRange(filter);
+  const { start: effectiveStart, end: effectiveEnd } = getDateRange(filter, customStart, customEnd);
 
   const loadFirst = useCallback(async () => {
     if (!deviceId) return;
@@ -70,10 +104,11 @@ export default function HistoryPlaceholder() {
     setAlerts([]);
     setLastTimestamp(null);
     setHasMore(true);
+    loadMoreTriggered.current = false;
     try {
       const [h, a] = await Promise.all([
-        loadHistory(deviceId, start, end, PAGE_SIZE),
-        loadAlerts(deviceId, start, end, PAGE_SIZE),
+        loadHistory(deviceId, effectiveStart, effectiveEnd, PAGE_SIZE),
+        loadAlerts(deviceId, effectiveStart, effectiveEnd, PAGE_SIZE),
       ]);
       setHistory(h);
       setAlerts(a);
@@ -87,7 +122,7 @@ export default function HistoryPlaceholder() {
     } finally {
       setLoading(false);
     }
-  }, [deviceId, start, end]);
+  }, [deviceId, effectiveStart.getTime(), effectiveEnd.getTime()]);
 
   useEffect(() => {
     if (!deviceId) {
@@ -96,13 +131,18 @@ export default function HistoryPlaceholder() {
       return;
     }
     loadFirst();
-  }, [deviceId, filter]);
+  }, [deviceId, filter, effectiveStart.getTime(), effectiveEnd.getTime()]);
 
-  const loadMore = async () => {
-    if (!deviceId || !hasMore || loadingMore || !lastTimestamp) return;
+  const loadMore = useCallback(async () => {
+    if (!deviceId || !hasMore || loadingMore || loadMoreTriggered.current) return;
+    if (!lastTimestamp) {
+      setHasMore(false);
+      return;
+    }
+    loadMoreTriggered.current = true;
     setLoadingMore(true);
     try {
-      const h = await loadHistory(deviceId, start, end, PAGE_SIZE, lastTimestamp);
+      const h = await loadHistory(deviceId, effectiveStart, effectiveEnd, PAGE_SIZE, lastTimestamp);
       if (h.length > 0) {
         setHistory((prev) => [...prev, ...h]);
         const last = h[h.length - 1];
@@ -114,8 +154,9 @@ export default function HistoryPlaceholder() {
       console.warn("Load more failed", e);
     } finally {
       setLoadingMore(false);
+      loadMoreTriggered.current = false;
     }
-  };
+  }, [deviceId, hasMore, loadingMore, lastTimestamp, effectiveStart, effectiveEnd]);
 
   const stateDistribution = React.useMemo(() => {
     const counts: Record<string, number> = {};
@@ -135,14 +176,17 @@ export default function HistoryPlaceholder() {
 
   const chartData = React.useMemo(() => {
     const sorted = [...history].sort((a, b) => {
-      const ta = a.timestamp?.toDate?.()?.getTime?.() ?? a.timestamp?.seconds ?? 0;
-      const tb = b.timestamp?.toDate?.()?.getTime?.() ?? b.timestamp?.seconds ?? 0;
+      const ta = a.timestamp?.toDate?.()?.getTime?.() ?? (a.timestamp?.seconds ? a.timestamp.seconds * 1000 : 0);
+      const tb = b.timestamp?.toDate?.()?.getTime?.() ?? (b.timestamp?.seconds ? b.timestamp.seconds * 1000 : 0);
       return ta - tb;
     });
-    return sorted.map((item, i) => ({
-      x: i,
-      y: Math.min(100, Math.max(0, Number(item.anxietyScore) ?? 0)),
-    }));
+    return sorted.map((item) => {
+      const t = item.timestamp?.toDate?.()?.getTime?.() ?? (item.timestamp?.seconds ? item.timestamp.seconds * 1000 : 0);
+      return {
+        time: t,
+        y: Math.min(100, Math.max(0, Number(item.anxietyScore) ?? 0)),
+      };
+    });
   }, [history]);
 
   if (!deviceId) {
@@ -165,10 +209,13 @@ export default function HistoryPlaceholder() {
   const innerW = chartWidth - padding.left - padding.right;
   const innerH = chartHeight - padding.top - padding.bottom;
   const maxY = 100;
+  const timeRange = chartData.length >= 2
+    ? chartData[chartData.length - 1].time - chartData[0].time
+    : 1;
   const points = chartData.length
     ? chartData
-        .map((d, i) => {
-          const x = padding.left + (d.x / Math.max(1, chartData.length - 1)) * innerW;
+        .map((d) => {
+          const x = padding.left + ((d.time - (chartData[0]?.time ?? 0)) / timeRange) * innerW;
           const y = padding.top + (1 - d.y / maxY) * innerH;
           return `${x},${y}`;
         })
@@ -177,27 +224,44 @@ export default function HistoryPlaceholder() {
 
   const mergedEvents = React.useMemo(() => {
     const list: { id: string; timestamp: any; state?: string; anxietyScore?: number; type?: string; score?: number; isAlert?: boolean }[] = [
-      ...history.map((h) => ({ ...h, id: h.id, isAlert: false })),
-      ...alerts.map((a) => ({ ...a, id: (a as any).id ?? `a-${a.timestamp}`, type: (a as any).type, score: (a as any).score, isAlert: true })),
+      ...history.map((h) => ({ ...h, id: (h as any).id ?? `h-${(h as any).timestamp?.seconds ?? Math.random()}`, isAlert: false })),
+      ...alerts.map((a) => ({ ...a, id: (a as any).id ?? `a-${(a as any).timestamp?.seconds ?? Math.random()}`, type: (a as any).type, score: (a as any).score, isAlert: true })),
     ];
     list.sort((a, b) => {
-      const ta = a.timestamp?.toDate?.()?.getTime?.() ?? a.timestamp?.seconds ?? 0;
-      const tb = b.timestamp?.toDate?.()?.getTime?.() ?? b.timestamp?.seconds ?? 0;
+      const ta = a.timestamp?.toDate?.()?.getTime?.() ?? (a.timestamp?.seconds ? a.timestamp.seconds * 1000 : 0);
+      const tb = b.timestamp?.toDate?.()?.getTime?.() ?? (b.timestamp?.seconds ? b.timestamp.seconds * 1000 : 0);
       return tb - ta;
     });
     return list;
   }, [history, alerts]);
 
-  return (
-    <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={["top"]}>
-      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-        <Text style={[styles.title, { color: theme.textDark }]}>History</Text>
+  const renderEventItem = ({ item }: { item: (typeof mergedEvents)[0] }) => (
+    <View
+      style={[
+        item.isAlert ? styles.alertCard : styles.eventCard,
+        { backgroundColor: theme.card, borderColor: item.isAlert ? "#F85149" : theme.border },
+      ]}
+    >
+      <Text style={[styles.eventTime, { color: theme.textMuted }]}>
+        {item.timestamp?.toDate?.()?.toLocaleString?.() ?? "—"}
+      </Text>
+      <Text style={[styles.eventState, { color: item.isAlert ? "#F85149" : theme.textDark }]}>
+        {item.isAlert
+          ? `${item.type ?? "Alert"} • Score: ${item.score ?? "—"}`
+          : `${item.state ?? "—"} • Anxiety: ${item.anxietyScore ?? "—"}`}
+      </Text>
+    </View>
+  );
 
-        <View style={styles.filterRow}>
-          {(["today", "yesterday", "week", "month"] as const).map((f) => (
+  const ListHeader = () => (
+    <>
+      <Text style={[styles.title, { color: theme.textDark }]}>History</Text>
+
+      <View style={styles.filterRow}>
+        {(["today", "yesterday", "week", "month", "custom"] as const).map((f) => (
             <TouchableOpacity
               key={f}
-              onPress={() => setFilter(f)}
+              onPress={() => f === "custom" ? setCustomModalVisible(true) : setFilter(f)}
               style={[
                 styles.filterBtn,
                 {
@@ -212,12 +276,51 @@ export default function HistoryPlaceholder() {
                   color: filter === f ? "#000" : theme.textDark,
                   fontSize: 12,
                 }}
+                numberOfLines={1}
               >
-                {f === "today" ? "Today" : f === "yesterday" ? "Yesterday" : f === "week" ? "This Week" : "This Month"}
+                {f === "today" ? "Today" : f === "yesterday" ? "Yesterday" : f === "week" ? "This Week" : f === "month" ? "This Month" : "Custom"}
               </Text>
             </TouchableOpacity>
           ))}
         </View>
+
+        <Modal visible={customModalVisible} transparent animationType="fade">
+          <TouchableOpacity
+            style={styles.modalOverlay}
+            activeOpacity={1}
+            onPress={() => setCustomModalVisible(false)}
+          >
+            <View style={[styles.modalContent, { backgroundColor: theme.card }]} onStartShouldSetResponder={() => true}>
+              <Text style={[styles.modalTitle, { color: theme.textDark }]}>Custom date range</Text>
+              {CUSTOM_PRESETS.map(({ label, days }) => {
+                const end = new Date();
+                const start = new Date();
+                start.setDate(start.getDate() - days);
+                start.setHours(0, 0, 0, 0);
+                return (
+                  <TouchableOpacity
+                    key={label}
+                    style={[styles.modalOption, { borderColor: theme.border }]}
+                    onPress={() => {
+                      setCustomStart(start);
+                      setCustomEnd(end);
+                      setFilter("custom");
+                      setCustomModalVisible(false);
+                    }}
+                  >
+                    <Text style={[styles.modalOptionText, { color: theme.textDark }]}>{label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+              <TouchableOpacity
+                style={[styles.modalCancel, { borderColor: theme.border }]}
+                onPress={() => setCustomModalVisible(false)}
+              >
+                <Text style={[styles.modalCancelText, { color: theme.textMuted }]}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </Modal>
 
         {loading ? (
           <ActivityIndicator size="large" color={theme.primary} style={{ marginTop: 40 }} />
@@ -285,50 +388,51 @@ export default function HistoryPlaceholder() {
               )}
             </View>
 
-            {/* 3. Event Log — 50 per load, scroll to load more */}
-            <Text style={[styles.sectionLabel, { color: theme.textDark, marginTop: 20 }]}>Event Log</Text>
-            {mergedEvents.length === 0 ? (
-              <View style={[styles.emptyCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
-                <Text style={[styles.emptyText, { color: theme.textMuted }]}>
-                  No events in this period. Data will appear when the harness streams to Firebase.
-                </Text>
-              </View>
-            ) : (
-              <>
-                {mergedEvents.map((item: any, i) => (
-                  <View
-                    key={item.id ?? i}
-                    style={[
-                      item.isAlert ? styles.alertCard : styles.eventCard,
-                      { backgroundColor: theme.card, borderColor: item.isAlert ? "#F85149" : theme.border },
-                    ]}
-                  >
-                    <Text style={[styles.eventTime, { color: theme.textMuted }]}>
-                      {item.timestamp?.toDate?.()?.toLocaleString?.() ?? "—"}
-                    </Text>
-                    <Text style={[styles.eventState, { color: item.isAlert ? "#F85149" : theme.textDark }]}>
-                      {item.isAlert ? `${item.type ?? "Alert"} • Score: ${item.score ?? "—"}` : `${item.state ?? "—"} • Anxiety: ${item.anxietyScore ?? "—"}`}
-                    </Text>
-                  </View>
-                ))}
-                {hasMore && (
-                  <TouchableOpacity
-                    onPress={loadMore}
-                    disabled={loadingMore}
-                    style={[styles.loadMoreBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
-                  >
-                    {loadingMore ? (
-                      <ActivityIndicator size="small" color={theme.primary} />
-                    ) : (
-                      <Text style={[styles.loadMoreText, { color: theme.primary }]}>Load more</Text>
-                    )}
-                  </TouchableOpacity>
-                )}
-              </>
-            )}
+      {/* 3. Event Log — header only; list is below */}
+      <Text style={[styles.sectionLabel, { color: theme.textDark, marginTop: 20 }]}>Event Log</Text>
           </>
         )}
-      </ScrollView>
+      </>
+    );
+
+  return (
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={["top"]}>
+      <FlatList
+        data={mergedEvents}
+        keyExtractor={(item) => item.id ?? String(item.timestamp)}
+        renderItem={renderEventItem}
+        ListHeaderComponent={loading ? null : ListHeader}
+        ListEmptyComponent={
+          !loading && mergedEvents.length === 0 ? (
+            <View style={[styles.emptyCard, { backgroundColor: theme.card, borderColor: theme.border, marginTop: 8 }]}>
+              <Text style={[styles.emptyText, { color: theme.textMuted }]}>
+                No events in this period. Data is stored in Firestore per device and unique per user.
+              </Text>
+            </View>
+          ) : null
+        }
+        contentContainerStyle={styles.scroll}
+        showsVerticalScrollIndicator={false}
+        onEndReached={() => {
+          if (mergedEvents.length > 0 && hasMore && !loadingMore) loadMore();
+        }}
+        onEndReachedThreshold={0.3}
+        ListFooterComponent={
+          hasMore && mergedEvents.length > 0 && loadingMore ? (
+            <View style={styles.loadMoreWrap}>
+              <ActivityIndicator size="small" color={theme.primary} />
+              <Text style={[styles.loadMoreText, { color: theme.textMuted }]}>Loading more…</Text>
+            </View>
+          ) : null
+        }
+      />
+      {loading && (
+        <View style={StyleSheet.absoluteFill} pointerEvents="none">
+          <View style={[styles.center, { flex: 1, backgroundColor: theme.background }]}>
+            <ActivityIndicator size="large" color={theme.primary} />
+          </View>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
@@ -357,5 +461,13 @@ const styles = StyleSheet.create({
   legendPct: { fontSize: 12 },
   donutWrap: { width: 120, height: 120 },
   loadMoreBtn: { padding: 16, borderRadius: 12, borderWidth: 1, alignItems: "center", marginTop: 12 },
+  loadMoreWrap: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, padding: 16 },
   loadMoreText: { fontWeight: "700" },
+  modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", padding: 24 },
+  modalContent: { borderRadius: 16, padding: 24 },
+  modalTitle: { fontSize: 18, fontWeight: "800", marginBottom: 16 },
+  modalOption: { paddingVertical: 14, borderBottomWidth: 1 },
+  modalOptionText: { fontSize: 16, fontWeight: "600" },
+  modalCancel: { marginTop: 16, paddingVertical: 12, alignItems: "center", borderTopWidth: 1 },
+  modalCancelText: { fontSize: 15 },
 });

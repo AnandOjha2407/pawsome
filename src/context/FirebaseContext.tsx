@@ -4,11 +4,10 @@ import {
   sendCalmCommand,
   sendStopCommand,
   LiveState,
-  getFcmToken,
-  saveFcmToken,
 } from "../firebase/firebase";
 import auth, { FirebaseAuthTypes } from "@react-native-firebase/auth";
 import { getDeviceId } from "../storage/deviceId";
+import { MOCK_DEVICE_ID, getMockLiveState } from "../mock/mockData";
 
 type FirebaseContextValue = {
   user: FirebaseAuthTypes.User | null;
@@ -48,15 +47,6 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
     return () => unsub?.();
   }, []);
 
-  useEffect(() => {
-    if (!user?.uid) return;
-    getFcmToken()
-      .then((token) => {
-        if (token) return saveFcmToken(user.uid, token);
-      })
-      .catch(() => {});
-  }, [user?.uid]);
-
   const signIn = useCallback(async (email: string, password: string) => {
     await auth().signInWithEmailAndPassword(email, password);
   }, []);
@@ -76,6 +66,7 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let mounted = true;
     let unsub: (() => void) | null = null;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
 
     (async () => {
       try {
@@ -84,15 +75,26 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
         setDeviceIdState(id ?? null);
 
         if (id && typeof id === "string" && id.trim().length > 0) {
-          try {
-            unsub = subscribeLiveState(id, (data) => {
-              if (mounted) {
-                setLiveState(data ?? null);
-                setError(null);
-              }
-            });
-          } catch (subErr: any) {
-            if (mounted) setLiveState(null);
+          if (id === MOCK_DEVICE_ID) {
+            let cycleIndex = 0;
+            setLiveState(getMockLiveState(0));
+            setError(null);
+            intervalId = setInterval(() => {
+              if (!mounted) return;
+              cycleIndex += 1;
+              setLiveState(getMockLiveState(cycleIndex));
+            }, 4000);
+          } else {
+            try {
+              unsub = subscribeLiveState(id, (data) => {
+                if (mounted) {
+                  setLiveState(data ?? null);
+                  setError(null);
+                }
+              });
+            } catch (subErr: any) {
+              if (mounted) setLiveState(null);
+            }
           }
         } else {
           setLiveState(null);
@@ -109,6 +111,7 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
 
     return () => {
       mounted = false;
+      if (intervalId != null) clearInterval(intervalId);
       try {
         unsub?.();
       } catch (_) {}
@@ -118,6 +121,7 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
   const sendCalm = useCallback(
     async (protocol: number, intensity: number, duration: number) => {
       if (!deviceId) return null;
+      if (deviceId === MOCK_DEVICE_ID) return "mock-calm-id";
       try {
         return await sendCalmCommand(deviceId, protocol, intensity, duration);
       } catch (e: any) {
@@ -130,6 +134,7 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
 
   const sendStop = useCallback(async () => {
     if (!deviceId) return null;
+    if (deviceId === MOCK_DEVICE_ID) return "mock-stop-id";
     try {
       return await sendStopCommand(deviceId);
     } catch (e: any) {
