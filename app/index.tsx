@@ -6,7 +6,7 @@ import { useFirebase } from "../src/context/FirebaseContext";
 export default function Index() {
   const firebase = useFirebase();
 
-  if (firebase?.authLoading) {
+  if (firebase == null || firebase.authLoading) {
     return (
       <View style={styles.loading}>
         <ActivityIndicator size="large" color="#00F0FF" />
@@ -14,15 +14,15 @@ export default function Index() {
     );
   }
 
-  if (!firebase?.user) {
-    return <Redirect href="/(auth)/login" />;
+  if (!firebase.user) {
+    return <Redirect href={"/login" as any} />;
   }
 
-  if (!firebase?.deviceId) {
-    return <Redirect href="/(onboarding)/dog-profile" />;
+  if (!firebase.deviceId) {
+    return <Redirect href={"/dog-profile" as any} />;
   }
 
-  return <Redirect href="/(tabs)/dashboard" />;
+  return <Redirect href={"/dashboard" as any} />;
 }
 
 const styles = StyleSheet.create({

@@ -1,6 +1,6 @@
 export default {
   expo: {
-    name: "DARYX",
+    name: "Pawsome",
     slug: "doggpt",
     version: "1.0.0",
     orientation: "portrait",
@@ -29,7 +29,7 @@ export default {
     android: {
       package: "com.pawsomebond.app",
       googleServicesFile: "./google-services.json",
-      label: "DARYX",
+      label: "Pawsome",
 
       permissions: [
         "android.permission.BLUETOOTH",

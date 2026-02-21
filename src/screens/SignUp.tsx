@@ -44,7 +44,6 @@ export default function SignUp({ onBack, onSuccess }: { onBack?: () => void; onS
     setLoading(true);
     try {
       await firebase?.signUp(e, p);
-      onSuccess?.();
     } catch (err: any) {
       const msg = err?.message ?? "Could not create account.";
       if (msg.toLowerCase().includes("email") && (msg.toLowerCase().includes("use") || msg.toLowerCase().includes("already"))) {

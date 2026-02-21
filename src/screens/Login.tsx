@@ -33,7 +33,6 @@ export default function Login({ onSignUp, onSuccess }: { onSignUp?: () => void; 
     setLoading(true);
     try {
       await firebase?.signIn(e, p);
-      onSuccess?.();
     } catch (err: any) {
       Alert.alert("Login failed", err?.message ?? "Invalid email or password.");
     } finally {
