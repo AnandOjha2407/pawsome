@@ -1,6 +1,9 @@
 /**
- * Firebase service for PawsomeBond v1
- * Realtime DB: live state | Firestore: commands, history
+ * Firebase service for PawsomeBond v1 — Pipeline Architecture
+ * Pipe 1: READ /devices/{deviceId}/live (Realtime DB)
+ * Pipe 2: WRITE /devices/{deviceId}/commands/latest (Realtime DB) — ESP32 polls, executes, deletes
+ * Pipe 3: Feedback via therapyActive in Pipe 1
+ * Firestore: history, alerts, user prefs, dog profile, FCM only.
  */
 import "@react-native-firebase/app";
 import database from "@react-native-firebase/database";
@@ -8,6 +11,42 @@ import firestore from "@react-native-firebase/firestore";
 import auth from "@react-native-firebase/auth";
 import messaging from "@react-native-firebase/messaging";
 import { MOCK_DEVICE_ID, getMockHistory, getMockAlerts } from "../mock/mockData";
+
+const COLLECTIONS = { devices: "devices", users: "users", commands: "commands", history: "history", alerts: "alerts", config: "config", profile: "profile" } as const;
+const RTDB_PATHS = { devices: "devices", userDevices: "userDevices", commandsLatest: "commands/latest" } as const;
+
+const CALM_THROTTLE_MS = 5000;
+const STOP_THROTTLE_MS = 2000;
+const MAX_RETRIES = 2;
+const RETRY_DELAY_MS = 800;
+
+let lastCalmAt = 0;
+let lastStopAt = 0;
+
+function validateDeviceId(deviceId: string): void {
+  const trimmed = deviceId?.trim?.();
+  if (!trimmed || trimmed.length > 128) throw new Error("Invalid device ID");
+  if (/[\x00-\x1f]/.test(trimmed)) throw new Error("Invalid device ID");
+}
+
+function validateCommandInputs(protocol: number, intensity: number, duration: number): void {
+  if (!Number.isFinite(protocol) || protocol < 1 || protocol > 8) throw new Error("Protocol must be 1–8");
+  if (!Number.isFinite(intensity) || intensity < 1 || intensity > 5) throw new Error("Intensity must be 1–5");
+  if (!Number.isFinite(duration) || duration < 1 || duration > 7200) throw new Error("Duration must be 1–7200 seconds");
+}
+
+async function withRetry<T>(fn: () => Promise<T>, retries = MAX_RETRIES): Promise<T> {
+  let lastErr: unknown;
+  for (let i = 0; i <= retries; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      lastErr = e;
+      if (i < retries) await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * (i + 1)));
+    }
+  }
+  throw lastErr;
+}
 
 export type LiveState = {
   state: "SLEEPING" | "CALM" | "ALERT" | "ANXIOUS" | "ACTIVE";
@@ -17,15 +56,54 @@ export type LiveState = {
   breathingRate: number;
   circuitTemp: number;
   batteryPercent: number;
-  connectionType: "wifi" | "ble";
+  connectionType: string;
   therapyActive: string;
   lastUpdated: number;
-  /** Calibration: 1-5, from device */
   calibrationDay?: number;
   calibrationComplete?: boolean;
-  /** Firmware version from device */
   firmwareVersion?: string;
+  motionEnergy?: number | null;
+  motionVariance?: number | null;
+  [key: string]: unknown;
 };
+
+/** Handout: therapyActive value -> display name and protocol # */
+export const THERAPY_ACTIVE_DISPLAY: Record<string, { name: string; protocol?: number }> = {
+  NONE: { name: "None active" },
+  HEARTBEAT: { name: "Heartbeat Rhythm", protocol: 1 },
+  BREATHING: { name: "Breathing Pulse", protocol: 2 },
+  BILATERAL: { name: "Bilateral Alternating", protocol: 3 },
+  SPINE_WAVE: { name: "Spine Wave", protocol: 4 },
+  COMFORT_HOLD: { name: "Comfort Hold", protocol: 5 },
+  PROGRESSIVE: { name: "Progressive Calm", protocol: 6 },
+  FOCUS: { name: "Focus Pattern", protocol: 7 },
+  SLEEP_INDUCER: { name: "Sleep Inducer", protocol: 8 },
+};
+
+/** Normalize raw live JSON: every field uses ?? so app never crashes on missing/unknown. */
+export function normalizeLiveState(raw: Record<string, unknown> | null): LiveState | null {
+  if (!raw || typeof raw !== "object") return null;
+  const state = (raw.state ?? "CALM") as LiveState["state"];
+  const validStates: LiveState["state"][] = ["SLEEPING", "CALM", "ALERT", "ANXIOUS", "ACTIVE"];
+  const safeState = validStates.includes(state) ? state : "CALM";
+  return {
+    state: safeState,
+    anxietyScore: typeof raw.anxietyScore === "number" && Number.isFinite(raw.anxietyScore) ? raw.anxietyScore : 0,
+    confidence: typeof raw.confidence === "number" && Number.isFinite(raw.confidence) ? raw.confidence : 0,
+    activityLevel: typeof raw.activityLevel === "number" && Number.isFinite(raw.activityLevel) ? raw.activityLevel : 0,
+    breathingRate: typeof raw.breathingRate === "number" && Number.isFinite(raw.breathingRate) ? raw.breathingRate : 0,
+    circuitTemp: typeof raw.circuitTemp === "number" && Number.isFinite(raw.circuitTemp) ? raw.circuitTemp : 0,
+    batteryPercent: typeof raw.batteryPercent === "number" && Number.isFinite(raw.batteryPercent) ? raw.batteryPercent : 0,
+    connectionType: typeof raw.connectionType === "string" ? raw.connectionType : "wifi",
+    therapyActive: typeof raw.therapyActive === "string" ? raw.therapyActive : "NONE",
+    lastUpdated: typeof raw.lastUpdated === "number" && Number.isFinite(raw.lastUpdated) ? raw.lastUpdated : 0,
+    calibrationDay: typeof raw.calibrationDay === "number" ? raw.calibrationDay : undefined,
+    calibrationComplete: raw.calibrationComplete === true,
+    firmwareVersion: typeof raw.firmwareVersion === "string" ? raw.firmwareVersion : undefined,
+    motionEnergy: typeof raw.motionEnergy === "number" ? raw.motionEnergy : null,
+    motionVariance: typeof raw.motionVariance === "number" ? raw.motionVariance : null,
+  };
+}
 
 export type CalmCommand = {
   cmd: "calm";
@@ -79,74 +157,66 @@ export const PROTOCOLS = [
   { id: 8, name: "Sleep Inducer", desc: "Ultra-slow breathing for sleep" },
 ];
 
+/** Pipe 1: READ only. Call onData with normalized live state (and optionally raw for debug). */
 export function subscribeLiveState(
   deviceId: string,
-  onData: (data: LiveState | null) => void
+  onData: (data: LiveState | null, raw?: Record<string, unknown> | null) => void
 ): () => void {
-  const ref = database().ref(`devices/${deviceId}/live`);
+  validateDeviceId(deviceId);
+  const ref = database().ref(`${RTDB_PATHS.devices}/${deviceId}/live`);
   const callback = (snapshot: any) => {
     const val = snapshot.val();
-    onData(val ? (val as LiveState) : null);
+    if (!val || typeof val !== "object") {
+      onData(null, null);
+      return;
+    }
+    const raw = val as Record<string, unknown>;
+    const normalized = normalizeLiveState(raw);
+    onData(normalized, raw);
   };
   ref.on("value", callback);
   return () => ref.off("value", callback);
 }
 
+/** Pipe 2: WRITE /devices/{deviceId}/commands/latest. ESP32 polls, executes, deletes. Returns "ok". */
 export async function sendCalmCommand(
   deviceId: string,
   protocol: number,
   intensity: number,
   duration: number
 ): Promise<string> {
-  const uid = auth().currentUser?.uid;
-  const docRef = await firestore()
-    .collection("devices")
-    .doc(deviceId)
-    .collection("commands")
-    .add({
-      cmd: "calm",
-      protocol,
-      intensity,
-      duration,
-      status: "pending",
-      createdAt: firestore.FieldValue.serverTimestamp(),
-      userId: uid ?? null,
-    });
-  return docRef.id;
+  validateDeviceId(deviceId);
+  validateCommandInputs(protocol, intensity, duration);
+  const now = Date.now();
+  if (now - lastCalmAt < CALM_THROTTLE_MS) throw new Error("Please wait a few seconds before sending another calm command");
+  lastCalmAt = now;
+  return withRetry(async () => {
+    const ref = database().ref(`${RTDB_PATHS.devices}/${deviceId}/${RTDB_PATHS.commandsLatest}`);
+    await ref.set({ cmd: "calm", protocol, intensity, duration });
+    return "ok";
+  });
 }
 
-/** Subscribe to a command doc to watch status: pending -> sent -> delivered. Returns unsubscribe. */
+/** Pipe 3: Command feedback is via therapyActive in live state (no separate subscription). Kept for compat; no-op. */
 export function subscribeCommandStatus(
-  deviceId: string,
-  commandId: string,
-  onStatus: (status: "pending" | "sent" | "delivered" | null) => void
+  _deviceId: string,
+  _commandId: string,
+  _onStatus: (status: "pending" | "sent" | "delivered" | null) => void
 ): () => void {
-  const ref = firestore()
-    .collection("devices")
-    .doc(deviceId)
-    .collection("commands")
-    .doc(commandId);
-  const unsub = ref.onSnapshot(
-    (snap) => {
-      const data = snap.data();
-      const status = data?.status ?? null;
-      onStatus(status as "pending" | "sent" | "delivered" | null);
-    },
-    () => onStatus(null)
-  );
-  return () => unsub();
+  return () => {};
 }
 
+/** Pipe 2: WRITE stop to commands/latest. */
 export async function sendStopCommand(deviceId: string): Promise<string> {
-  const docRef = await firestore()
-    .collection("devices")
-    .doc(deviceId)
-    .collection("commands")
-    .add({
-      cmd: "stop",
-      createdAt: firestore.FieldValue.serverTimestamp(),
-    });
-  return docRef.id;
+  validateDeviceId(deviceId);
+  const now = Date.now();
+  if (now - lastStopAt < STOP_THROTTLE_MS) throw new Error("Please wait a moment before sending stop again");
+  lastStopAt = now;
+  return withRetry(async () => {
+    const ref = database().ref(`${RTDB_PATHS.devices}/${deviceId}/${RTDB_PATHS.commandsLatest}`);
+    await ref.set({ cmd: "stop" });
+    return "ok";
+  });
 }
 
 /** Config command per 5.5: write to /devices/{device_id}/commands so device applies auto-calm settings */
@@ -157,23 +227,31 @@ export type ConfigCommandPayload = {
   defaultIntensity: number; // 1-5
 };
 
+function validateConfigPayload(p: ConfigCommandPayload): void {
+  if (typeof p.autoCalmEnabled !== "boolean") throw new Error("Invalid autoCalmEnabled");
+  if (!Number.isFinite(p.autoCalmThreshold) || p.autoCalmThreshold < 0 || p.autoCalmThreshold > 100) throw new Error("Threshold must be 0–100");
+  if (!Number.isFinite(p.defaultProtocol) || p.defaultProtocol < 1 || p.defaultProtocol > 8) throw new Error("Default protocol must be 1–8");
+  if (!Number.isFinite(p.defaultIntensity) || p.defaultIntensity < 1 || p.defaultIntensity > 5) throw new Error("Default intensity must be 1–5");
+}
+
+/** Pipe 2: WRITE config to commands/latest. Handout: autoCalmEnabled, autoCalmThreshold; we also send defaultProtocol/defaultIntensity for Settings. */
 export async function sendConfigCommand(
   deviceId: string,
   payload: ConfigCommandPayload
 ): Promise<string> {
-  const docRef = await firestore()
-    .collection("devices")
-    .doc(deviceId)
-    .collection("commands")
-    .add({
+  validateDeviceId(deviceId);
+  validateConfigPayload(payload);
+  return withRetry(async () => {
+    const ref = database().ref(`${RTDB_PATHS.devices}/${deviceId}/${RTDB_PATHS.commandsLatest}`);
+    await ref.set({
       cmd: "config",
       autoCalmEnabled: payload.autoCalmEnabled,
       autoCalmThreshold: payload.autoCalmThreshold,
       defaultProtocol: payload.defaultProtocol,
       defaultIntensity: payload.defaultIntensity,
-      updatedAt: firestore.FieldValue.serverTimestamp(),
     });
-  return docRef.id;
+    return "ok";
+  });
 }
 
 export async function loadHistory(
@@ -291,9 +369,23 @@ export async function loadDeviceConfig(
 /** Store FCM token at /users/{uid} (field fcmToken) — 7. Push Notifications. Refresh on app start and on token refresh. */
 export async function saveFcmToken(uid: string, token: string): Promise<void> {
   await firestore()
-    .collection("users")
+    .collection(COLLECTIONS.users)
     .doc(uid)
     .set({ fcmToken: token, fcmTokenUpdatedAt: firestore.FieldValue.serverTimestamp() }, { merge: true });
+}
+
+/** Sync deviceId to backend so security rules can enforce device ownership. Call when user sets or clears device ID. */
+export async function syncDeviceIdToBackend(uid: string, deviceId: string | null): Promise<void> {
+  await firestore()
+    .collection(COLLECTIONS.users)
+    .doc(uid)
+    .set({ deviceId: deviceId ?? null, deviceIdUpdatedAt: firestore.FieldValue.serverTimestamp() }, { merge: true });
+  const rtdbRef = database().ref(`${RTDB_PATHS.userDevices}/${uid}`);
+  if (deviceId != null && deviceId.trim().length > 0) {
+    await rtdbRef.set(deviceId.trim());
+  } else {
+    await rtdbRef.remove();
+  }
 }
 
 /** User notification preferences (5.5) — stored in Firestore users/{uid} */

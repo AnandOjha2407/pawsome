@@ -3,6 +3,7 @@ import {
   subscribeLiveState,
   sendCalmCommand,
   sendStopCommand,
+  syncDeviceIdToBackend,
   LiveState,
 } from "../firebase/firebase";
 import auth, { FirebaseAuthTypes } from "@react-native-firebase/auth";
@@ -18,6 +19,10 @@ type FirebaseContextValue = {
   deviceId: string | null;
   setDeviceId: (id: string | null) => void;
   liveState: LiveState | null;
+  /** Raw JSON from /devices/{id}/live for debug (Settings). */
+  rawLiveData: Record<string, unknown> | null;
+  /** Client time (ms) when we last received live data — for "Last update: Xs ago". */
+  liveReceivedAt: number | null;
   loading: boolean;
   error: string | null;
   sendCalm: (protocol: number, intensity: number, duration: number) => Promise<string | null>;
@@ -31,6 +36,8 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
   const [authLoading, setAuthLoading] = useState(true);
   const [deviceId, setDeviceIdState] = useState<string | null>(null);
   const [liveState, setLiveState] = useState<LiveState | null>(null);
+  const [rawLiveData, setRawLiveData] = useState<Record<string, unknown> | null>(null);
+  const [liveReceivedAt, setLiveReceivedAt] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -61,6 +68,10 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
     setDeviceIdState(id);
     const { setDeviceId: saveDeviceId } = await import("../storage/deviceId");
     await saveDeviceId(id);
+    const uid = auth().currentUser?.uid;
+    if (uid) {
+      syncDeviceIdToBackend(uid, id).catch((e) => console.warn("[Firebase] syncDeviceIdToBackend failed", e));
+    }
   }, []);
 
   useEffect(() => {
@@ -73,6 +84,10 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
         const id = await getDeviceId();
         if (!mounted) return;
         setDeviceIdState(id ?? null);
+        const uid = auth().currentUser?.uid;
+        if (uid && id && id !== MOCK_DEVICE_ID) {
+          syncDeviceIdToBackend(uid, id).catch((e) => console.warn("[Firebase] sync deviceId on load failed", e));
+        }
 
         if (id && typeof id === "string" && id.trim().length > 0) {
           if (id === MOCK_DEVICE_ID) {
@@ -86,23 +101,33 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
             }, 4000);
           } else {
             try {
-              unsub = subscribeLiveState(id, (data) => {
+              unsub = subscribeLiveState(id, (data, raw) => {
                 if (mounted) {
                   setLiveState(data ?? null);
+                  setRawLiveData(raw ?? null);
+                  setLiveReceivedAt(data || raw ? Date.now() : null);
                   setError(null);
                 }
               });
             } catch (subErr: any) {
-              if (mounted) setLiveState(null);
+              if (mounted) {
+                setLiveState(null);
+                setRawLiveData(null);
+                setLiveReceivedAt(null);
+              }
             }
           }
         } else {
           setLiveState(null);
+          setRawLiveData(null);
+          setLiveReceivedAt(null);
         }
       } catch (e: any) {
         if (mounted) {
           setError(e?.message ?? "Firebase error");
           setLiveState(null);
+          setRawLiveData(null);
+          setLiveReceivedAt(null);
         }
       } finally {
         if (mounted) setLoading(false);
@@ -152,6 +177,8 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
     deviceId,
     setDeviceId,
     liveState,
+    rawLiveData,
+    liveReceivedAt,
     loading,
     error,
     sendCalm,

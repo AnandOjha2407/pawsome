@@ -931,6 +931,23 @@ export default function Settings() {
         </Text>
       </View>
 
+      {/* Debug: raw live JSON from Pipe 1 (future-proofing per handout) */}
+      <View style={ui.section}>
+        <Text style={[ui.sectionTitle, { color: theme.textDark }]}>Debug — Live data (raw)</Text>
+        <Text style={[ui.hint, { color: theme.textMuted, marginBottom: 8 }]}>
+          Raw JSON from device. New fields may appear; app ignores unknown keys.
+        </Text>
+        {firebase?.rawLiveData != null ? (
+          <ScrollView horizontal style={{ maxHeight: 180 }} nestedScrollEnabled>
+            <Text style={[ui.label, { color: theme.textMuted, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace", fontSize: 11 }]} selectable>
+              {JSON.stringify(firebase.rawLiveData, null, 2)}
+            </Text>
+          </ScrollView>
+        ) : (
+          <Text style={[ui.hint, { color: theme.textMuted }]}>No live data (set Device ID and ensure device is online)</Text>
+        )}
+      </View>
+
       {/* 5.5 Sign Out at bottom */}
       <View style={ui.section}>
         <TouchableOpacity

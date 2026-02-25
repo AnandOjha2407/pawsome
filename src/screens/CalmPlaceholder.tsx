@@ -1,4 +1,4 @@
-// src/screens/CalmPlaceholder.tsx — Calm Now (5.3): Remote therapy via Firestore /devices/{device_id}/commands
+// Calm Now: Pipe 2 writes to RTDB commands/latest; Pipe 3 feedback via liveState.therapyActive
 import React, { useState, useEffect, useRef } from "react";
 import {
   View,
@@ -13,7 +13,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useTheme } from "../ThemeProvider";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useFirebase } from "../context/FirebaseContext";
-import { PROTOCOLS, subscribeCommandStatus } from "../firebase/firebase";
+import { PROTOCOLS, THERAPY_ACTIVE_DISPLAY } from "../firebase/firebase";
 import { bleManager, THERAPY } from "../ble/BLEManager";
 
 const DURATIONS = [30, 60, 90, 120] as const;
@@ -27,6 +27,11 @@ const INTENSITY_LABELS: Record<number, string> = {
 
 const STATUS_TIMEOUT_MS = 10000;
 
+function therapyDisplayName(therapyActive: string): string {
+  const entry = THERAPY_ACTIVE_DISPLAY[therapyActive];
+  return entry?.name ?? (therapyActive && therapyActive !== "NONE" ? therapyActive : "None active");
+}
+
 export default function CalmPlaceholder() {
   const { theme } = useTheme();
   const firebase = useFirebase();
@@ -34,20 +39,31 @@ export default function CalmPlaceholder() {
   const [intensity, setIntensity] = useState(3);
   const [duration, setDuration] = useState(60);
   const [sending, setSending] = useState(false);
-  const [commandStatus, setCommandStatus] = useState<"pending" | "sent" | "delivered" | null>(null);
   const [sendingStop, setSendingStop] = useState(false);
+  const [waitingForDevice, setWaitingForDevice] = useState(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const unsubRef = useRef<(() => void) | null>(null);
 
   const deviceId = firebase?.deviceId;
+  const liveState = firebase?.liveState ?? null;
+  const therapyActive = (liveState?.therapyActive ?? "NONE").trim() || "NONE";
+  const isTherapyRunning = therapyActive !== "NONE";
   const vestConnected = (bleManager as any)?.getConnections?.()?.connected?.vest ?? false;
 
   useEffect(() => {
     return () => {
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
-      unsubRef.current?.();
     };
   }, []);
+
+  // Pipe 3: when we're waiting for device and therapyActive becomes non-NONE, stop waiting
+  useEffect(() => {
+    if (waitingForDevice && isTherapyRunning) {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+      setSending(false);
+      setWaitingForDevice(false);
+    }
+  }, [waitingForDevice, isTherapyRunning]);
 
   /** Map app protocol 1–8 to BLE therapy codes (fallback when no Device ID) */
   const protocolToBLECode = (p: number): number => {
@@ -75,49 +91,34 @@ export default function CalmPlaceholder() {
           setSending(false);
         }
       } else {
-        Alert.alert("Set Device ID", "Set Device ID in Settings to send therapy to the harness (Firestore). BLE is setup-only.");
+        Alert.alert("Set Device ID", "Set Device ID in Settings to send therapy to the harness.");
       }
       return;
     }
 
     setSending(true);
-    setCommandStatus("pending");
-    unsubRef.current?.();
+    setWaitingForDevice(true);
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
 
     try {
-      const commandId = await firebase.sendCalm(protocol, intensity, duration);
-      if (!commandId) {
+      const result = await firebase.sendCalm(protocol, intensity, duration);
+      if (!result) {
         Alert.alert("Error", "Failed to send command.");
         setSending(false);
-        setCommandStatus(null);
+        setWaitingForDevice(false);
         return;
       }
 
-      unsubRef.current = subscribeCommandStatus(deviceId, commandId, (status) => {
-        setCommandStatus(status);
-        if (status === "delivered") {
-          if (timeoutRef.current) clearTimeout(timeoutRef.current);
-          timeoutRef.current = null;
-          unsubRef.current?.();
-          unsubRef.current = null;
-          setSending(false);
-          setCommandStatus(null);
-        }
-      });
-
       timeoutRef.current = setTimeout(() => {
         timeoutRef.current = null;
-        unsubRef.current?.();
-        unsubRef.current = null;
         setSending(false);
-        setCommandStatus(null);
+        setWaitingForDevice(false);
         Alert.alert("Timeout", "No response from device in 10 seconds. Check connection and Device ID.");
       }, STATUS_TIMEOUT_MS);
     } catch (e: any) {
       Alert.alert("Error", e?.message ?? "Failed to send.");
       setSending(false);
-      setCommandStatus(null);
+      setWaitingForDevice(false);
     }
   };
 
@@ -232,27 +233,28 @@ export default function CalmPlaceholder() {
           ))}
         </View>
 
-        {/* Start: sends to Firestore /devices/{device_id}/commands — 5.3 */}
+        {/* Pipe 3: status from therapyActive. Show Start when none active, Stop when running. */}
+        {isTherapyRunning ? (
+          <View style={[styles.therapyStatusCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            <Text style={[styles.therapyStatusLabel, { color: theme.textMuted }]}>{therapyDisplayName(therapyActive)} running</Text>
+          </View>
+        ) : null}
         <TouchableOpacity
           onPress={handleStart}
-          disabled={sending}
-          style={[styles.startBtn, { backgroundColor: theme.primary, opacity: sending ? 0.6 : 1 }]}
+          disabled={sending || isTherapyRunning}
+          style={[styles.startBtn, { backgroundColor: theme.primary, opacity: sending || isTherapyRunning ? 0.6 : 1 }]}
         >
           {sending ? (
             <View style={styles.sendingWrap}>
               <ActivityIndicator size="small" color="#000" />
               <Text style={[styles.statusText, { color: theme.textDark }]}>
-                {commandStatus === "pending"
-                  ? "Sending…"
-                  : commandStatus === "sent"
-                    ? "Sent to device…"
-                    : "Delivering…"}
+                Sending… waiting for device (check therapy status in ~5s)
               </Text>
             </View>
           ) : (
             <>
               <MaterialIcons name="play-arrow" size={24} color="#000" />
-              <Text style={[styles.startBtnText, { color: "#000" }]}>Start</Text>
+              <Text style={[styles.startBtnText, { color: "#000" }]}>{isTherapyRunning ? "Therapy active" : "Start"}</Text>
             </>
           )}
         </TouchableOpacity>
@@ -339,4 +341,11 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   stopBtnText: { fontSize: 16, fontWeight: "800" },
+  therapyStatusCard: {
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginTop: 16,
+  },
+  therapyStatusLabel: { fontSize: 14, fontWeight: "600" },
 });

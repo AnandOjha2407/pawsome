@@ -1,5 +1,4 @@
-// src/screens/Dashboard.tsx — Live Dashboard per 5.2 (DARYX requirements)
-// DATA SOURCE: Firebase Realtime DB /devices/{device_id}/live only. BLE is setup-only; all live data from device flows through Firebase.
+// Dashboard — Pipe 1: READ only from /devices/{deviceId}/live. All fields use ?? for future-proofing.
 import React, { useState, useEffect, useRef } from "react";
 import {
   View,
@@ -16,6 +15,7 @@ import { useTheme } from "../ThemeProvider";
 import { MaterialIcons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useFirebase } from "../context/FirebaseContext";
+import { THERAPY_ACTIVE_DISPLAY } from "../firebase/firebase";
 import { bleManager } from "../ble/BLEManager";
 
 // State emoji/icon and glow per spec 5.2 — all from device state
@@ -86,12 +86,22 @@ export default function Dashboard() {
   const state = (live?.state ?? "CALM") as keyof typeof STATE_EMOJI;
   const emoji = STATE_EMOJI[state] ?? "😌";
   const glowColor = STATE_GLOW[state] ?? theme.primary + "26";
-  const lastUpdated = live?.lastUpdated
-    ? `${Math.round((Date.now() / 1000 - live.lastUpdated))}s ago`
+  // Handout: device lastUpdated is "seconds since boot". We show time since app last received data.
+  const receivedAt = firebase?.liveReceivedAt ?? null;
+  const lastUpdated = receivedAt != null
+    ? `${Math.max(0, Math.round((Date.now() - receivedAt) / 1000))}s ago`
     : "—";
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const isAnxious = state === "ANXIOUS";
   const therapyActive = !!(live?.therapyActive && live.therapyActive !== "NONE" && live.therapyActive !== "");
+
+  // Refresh "Xs ago" every second while we have live data
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (receivedAt == null) return;
+    const id = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [receivedAt]);
 
   // Emergency Stop: loading until device acknowledges (therapyActive → none) or 8s timeout
   useEffect(() => {
@@ -130,17 +140,16 @@ export default function Dashboard() {
     );
   }
 
-  // All displayed values from device via Firebase /devices/{device_id}/live
+  // All displayed values from device via Pipe 1; ?? so missing fields never crash
   const anxietyScore = live?.anxietyScore ?? 0;
-  const activityLevel = live?.activityLevel ?? 0;
+  const activityLevel = Math.min(10, Math.max(0, live?.activityLevel ?? 0));
   const breathingRate = live?.breathingRate;
   const circuitTemp = live?.circuitTemp;
-  const confidence = live?.confidence;
-  const batteryPercent = live?.batteryPercent;
+  const confidence = live?.confidence ?? 0;
+  const batteryPercent = live?.batteryPercent ?? 0;
   const connectionType = live?.connectionType ?? "wifi";
-  const therapyStatusText = live?.therapyActive && live.therapyActive !== "NONE" && live.therapyActive !== ""
-    ? live.therapyActive
-    : "None active";
+  const therapyActiveRaw = (live?.therapyActive ?? "NONE").trim() || "NONE";
+  const therapyStatusText = THERAPY_ACTIVE_DISPLAY[therapyActiveRaw]?.name ?? (therapyActiveRaw !== "NONE" ? therapyActiveRaw : "None active");
 
   const formatTemp = (v: number | undefined | null): string =>
     v != null && typeof v === "number" ? `${Number(v).toFixed(1)}` : "--";
@@ -158,7 +167,7 @@ export default function Dashboard() {
           </Text>
           <View style={styles.headerRight}>
             <View style={[styles.badge, { backgroundColor: theme.card }]}>
-              <Text style={{ fontSize: 12, color: theme.textMuted }}>🔋 {batteryPercent != null ? `${batteryPercent}%` : "--"}</Text>
+              <Text style={{ fontSize: 12, color: theme.textMuted }}>🔋 {typeof batteryPercent === "number" ? `${batteryPercent}%` : "--"}</Text>
             </View>
             <View style={[styles.badge, { backgroundColor: theme.card }]}>
               <Text style={{ fontSize: 12, color: theme.textMuted }}>
