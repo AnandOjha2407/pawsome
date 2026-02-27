@@ -24,6 +24,7 @@ export default function SignUp({ onBack, onSuccess }: { onBack?: () => void; onS
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
 
   const handleSignUp = async () => {
     const e = email.trim();
@@ -53,6 +54,19 @@ export default function SignUp({ onBack, onSuccess }: { onBack?: () => void; onS
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleGoogleSignUp = async () => {
+    if (!firebase?.signInWithGoogle) return;
+    setGoogleLoading(true);
+    try {
+      await firebase.signInWithGoogle();
+    } catch (err: any) {
+      const message = err?.message ?? "Could not continue with Google.";
+      Alert.alert("Google sign-in failed", message);
+    } finally {
+      setGoogleLoading(false);
     }
   };
 
@@ -109,8 +123,11 @@ export default function SignUp({ onBack, onSuccess }: { onBack?: () => void; onS
         </View>
         <TouchableOpacity
           onPress={handleSignUp}
-          disabled={loading}
-          style={[styles.primaryBtn, { backgroundColor: theme.primary, opacity: loading ? 0.7 : 1 }]}
+          disabled={loading || googleLoading}
+          style={[
+            styles.primaryBtn,
+            { backgroundColor: theme.primary, opacity: loading || googleLoading ? 0.7 : 1 },
+          ]}
         >
           {loading ? <ActivityIndicator color="#000" /> : <Text style={styles.primaryBtnText}>Sign up</Text>}
         </TouchableOpacity>
@@ -118,6 +135,36 @@ export default function SignUp({ onBack, onSuccess }: { onBack?: () => void; onS
           <TouchableOpacity onPress={onBack} style={styles.linkBtn}>
             <Text style={[styles.linkText, { color: theme.primary }]}>Back to log in</Text>
           </TouchableOpacity>
+        )}
+        {firebase?.signInWithGoogle && (
+          <>
+            <View style={styles.dividerRow}>
+              <View style={[styles.divider, { borderBottomColor: theme.border }]} />
+              <Text style={[styles.dividerText, { color: theme.textMuted }]}>or</Text>
+              <View style={[styles.divider, { borderBottomColor: theme.border }]} />
+            </View>
+            <TouchableOpacity
+              onPress={handleGoogleSignUp}
+              disabled={googleLoading || loading}
+              style={[
+                styles.googleBtn,
+                {
+                  backgroundColor: theme.card,
+                  borderColor: theme.border,
+                  opacity: googleLoading || loading ? 0.7 : 1,
+                },
+              ]}
+            >
+              {googleLoading ? (
+                <ActivityIndicator color={theme.textDark} />
+              ) : (
+                <>
+                  <MaterialIcons name="google" size={20} color={theme.textDark} style={{ marginRight: 8 }} />
+                  <Text style={[styles.googleBtnText, { color: theme.textDark }]}>Continue with Google</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </>
         )}
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -137,4 +184,31 @@ const styles = StyleSheet.create({
   primaryBtnText: { color: "#000", fontWeight: "800", fontSize: 16 },
   linkBtn: { marginTop: 20, alignItems: "center" },
   linkText: { fontSize: 15, fontWeight: "600" },
+  dividerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 24,
+    marginBottom: 12,
+  },
+  divider: {
+    flex: 1,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  dividerText: {
+    marginHorizontal: 8,
+    fontSize: 12,
+  },
+  googleBtn: {
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    marginTop: 4,
+  },
+  googleBtnText: {
+    fontSize: 15,
+    fontWeight: "600",
+  },
 });

@@ -1,37 +1,27 @@
 {
   "project_info": {
-    "project_number": "194207887869",
-    "firebase_url": "https://pawsomebond-default-rtdb.firebaseio.com",
-    "project_id": "pawsomebond",
-    "storage_bucket": "pawsomebond.firebasestorage.app"
+    "project_number": "815796708002",
+    "firebase_url": "https://pawsomebond-464d2-default-rtdb.firebaseio.com",
+    "project_id": "pawsomebond-464d2",
+    "storage_bucket": "pawsomebond-464d2.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:194207887869:android:53500d5e8e5265ae5ba994",
+        "mobilesdk_app_id": "1:815796708002:android:3ef866b7ead6772611edfb",
         "android_client_info": {
           "package_name": "com.pawsomebond.app"
         }
       },
-      "oauth_client": [
-        {
-          "client_id": "194207887869-35bl3edlglngcphtvsc5qcg6fsfc5q36.apps.googleusercontent.com",
-          "client_type": 3
-        }
-      ],
+      "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyAP8sX1Elr1fTiEaNP0aK5lQpdAL2pJgcs"
+          "current_key": "AIzaSyAKYt8n2lXHjvLp0y0f92EZxJW7nctcjJM"
         }
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": [
-            {
-              "client_id": "194207887869-35bl3edlglngcphtvsc5qcg6fsfc5q36.apps.googleusercontent.com",
-              "client_type": 3
-            }
-          ]
+          "other_platform_oauth_client": []
         }
       }
     }

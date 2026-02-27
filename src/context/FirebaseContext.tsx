@@ -7,6 +7,7 @@ import {
   LiveState,
 } from "../firebase/firebase";
 import auth, { FirebaseAuthTypes } from "@react-native-firebase/auth";
+import { GoogleSignin, statusCodes } from "@react-native-google-signin/google-signin";
 import { getDeviceId } from "../storage/deviceId";
 import { MOCK_DEVICE_ID, getMockLiveState } from "../mock/mockData";
 
@@ -16,6 +17,7 @@ type FirebaseContextValue = {
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
+   signInWithGoogle: () => Promise<void>;
   deviceId: string | null;
   setDeviceId: (id: string | null) => void;
   liveState: LiveState | null;
@@ -42,6 +44,17 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    try {
+      GoogleSignin.configure({
+        webClientId: "194207887869-35bl3edlglngcphtvsc5qcg6fsfc5q36.apps.googleusercontent.com",
+        offlineAccess: true,
+      });
+    } catch (e) {
+      // ignore configure errors – sign-in will surface real issues
+    }
+  }, []);
+
+  useEffect(() => {
     let unsub: (() => void) | undefined;
     try {
       unsub = auth().onAuthStateChanged((u) => {
@@ -61,7 +74,30 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
     await auth().createUserWithEmailAndPassword(email, password);
   }, []);
   const signOut = useCallback(async () => {
+    try {
+      await GoogleSignin.signOut();
+    } catch {
+      // ignore Google sign-out failures
+    }
     await auth().signOut();
+  }, []);
+
+  const signInWithGoogle = useCallback(async () => {
+    try {
+      await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
+      const { idToken } = await GoogleSignin.signIn();
+      if (!idToken) {
+        throw new Error("Google sign-in failed: missing ID token.");
+      }
+      const googleCredential = auth.GoogleAuthProvider.credential(idToken);
+      await auth().signInWithCredential(googleCredential);
+    } catch (e: any) {
+      if (e?.code === statusCodes.SIGN_IN_CANCELLED) {
+        // user cancelled, not an error for the UI
+        return;
+      }
+      throw e;
+    }
   }, []);
 
   const setDeviceId = useCallback(async (id: string | null) => {
@@ -174,6 +210,7 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
     signIn,
     signUp,
     signOut,
+    signInWithGoogle,
     deviceId,
     setDeviceId,
     liveState,

@@ -184,7 +184,7 @@ export default function Settings() {
   const [firebaseDeviceId, setFirebaseDeviceId] = useState<string>("");
   useFocusEffect(
     useCallback(() => {
-      if (firebase?.deviceId) setFirebaseDeviceId(firebase.deviceId);
+      setFirebaseDeviceId(firebase?.deviceId ?? "");
     }, [firebase?.deviceId])
   );
 
@@ -541,6 +541,33 @@ export default function Settings() {
           setAutoConnect(true);
           setStressAlertsEnabled(true);
           setStressThreshold("90");
+          setAutoCalmEnabled(false);
+          setAutoCalmThreshold(60);
+          setAutoCalmProtocol(1);
+          setAutoCalmIntensity(3);
+
+          // Clear Device ID used for Firebase live data
+          try {
+            if (firebase?.setDeviceId) {
+              await firebase.setDeviceId(null);
+            }
+            setFirebaseDeviceId("");
+          } catch {
+            // ignore device ID reset failures
+          }
+
+          // Reset notification preferences to defaults and persist if possible
+          const defaultPrefs: UserNotificationPreferences = {
+            anxietyAlerts: true,
+            therapyUpdates: true,
+            batteryWarnings: true,
+            connectionAlerts: true,
+          };
+          setNotifPrefs(defaultPrefs);
+          if (firebase?.user?.uid) {
+            saveUserPreferences(firebase.user.uid, defaultPrefs).catch(() => {});
+          }
+
           Alert.alert("Reset", "Settings have been reset.");
         },
       },
@@ -872,10 +899,11 @@ export default function Settings() {
         <TouchableOpacity
           style={[ui.secondaryBtn, { backgroundColor: theme.card, borderColor: theme.border, marginTop: 8 }]}
           onPress={async () => {
-            const id = (firebaseDeviceId || firebase?.deviceId || "").trim();
-            if (id && firebase?.setDeviceId) {
-              await firebase.setDeviceId(id);
-              Alert.alert("Saved", "Device ID saved.");
+            const id = (firebaseDeviceId ?? "").trim();
+            if (firebase?.setDeviceId) {
+              await firebase.setDeviceId(id || null);
+              setFirebaseDeviceId(id);
+              Alert.alert("Saved", id ? "Device ID saved." : "Device ID cleared.");
             }
           }}
         >

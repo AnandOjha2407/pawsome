@@ -18,8 +18,10 @@ import { useTheme } from "../ThemeProvider";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useFirebase } from "../context/FirebaseContext";
 import { loadHistory, loadAlerts } from "../firebase/firebase";
+import { MOCK_DEVICE_ID } from "../mock/mockData";
 
 const PAGE_SIZE = 50;
+const INITIAL_EVENTS_VISIBLE = 5;
 const STATES = ["SLEEPING", "CALM", "ALERT", "ANXIOUS", "ACTIVE"] as const;
 const STATE_COLORS: Record<string, string> = {
   SLEEPING: "#58A6FF",
@@ -93,22 +95,25 @@ export default function HistoryPlaceholder() {
   const [hasMore, setHasMore] = useState(true);
   const [lastTimestamp, setLastTimestamp] = useState<Date | null>(null);
   const loadMoreTriggered = useRef(false);
+  const [eventLogExpanded, setEventLogExpanded] = useState(false);
 
   const deviceId = firebase?.deviceId;
+  const hasRealDevice = deviceId != null && deviceId !== MOCK_DEVICE_ID;
   const { start: effectiveStart, end: effectiveEnd } = getDateRange(filter, customStart, customEnd);
 
   const loadFirst = useCallback(async () => {
-    if (!deviceId) return;
+    if (!hasRealDevice) return;
     setLoading(true);
     setHistory([]);
     setAlerts([]);
     setLastTimestamp(null);
     setHasMore(true);
+    setEventLogExpanded(false);
     loadMoreTriggered.current = false;
     try {
       const [h, a] = await Promise.all([
-        loadHistory(deviceId, effectiveStart, effectiveEnd, PAGE_SIZE),
-        loadAlerts(deviceId, effectiveStart, effectiveEnd, PAGE_SIZE),
+        loadHistory(deviceId!, effectiveStart, effectiveEnd, PAGE_SIZE),
+        loadAlerts(deviceId!, effectiveStart, effectiveEnd, PAGE_SIZE),
       ]);
       setHistory(h);
       setAlerts(a);
@@ -122,19 +127,19 @@ export default function HistoryPlaceholder() {
     } finally {
       setLoading(false);
     }
-  }, [deviceId, effectiveStart.getTime(), effectiveEnd.getTime()]);
+  }, [hasRealDevice, deviceId, effectiveStart.getTime(), effectiveEnd.getTime()]);
 
   useEffect(() => {
-    if (!deviceId) {
+    if (!hasRealDevice) {
       setHistory([]);
       setAlerts([]);
       return;
     }
     loadFirst();
-  }, [deviceId, filter, effectiveStart.getTime(), effectiveEnd.getTime()]);
+  }, [hasRealDevice, deviceId, filter, effectiveStart.getTime(), effectiveEnd.getTime()]);
 
   const loadMore = useCallback(async () => {
-    if (!deviceId || !hasMore || loadingMore || loadMoreTriggered.current) return;
+    if (!hasRealDevice || !deviceId || !hasMore || loadingMore || loadMoreTriggered.current) return;
     if (!lastTimestamp) {
       setHasMore(false);
       return;
@@ -189,14 +194,16 @@ export default function HistoryPlaceholder() {
     });
   }, [history]);
 
-  if (!deviceId) {
+  if (!deviceId || !hasRealDevice) {
     return (
       <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={["top"]}>
         <View style={styles.center}>
           <MaterialIcons name="history" size={64} color={theme.primary} />
           <Text style={[styles.title, { color: theme.textDark }]}>History</Text>
           <Text style={[styles.subtitle, { color: theme.textMuted }]}>
-            Set Device ID in Settings to view anxiety timeline and event log.
+            {deviceId === MOCK_DEVICE_ID
+              ? "Connect a real device to see anxiety timeline and event log (no mock data here)."
+              : "Set Device ID in Settings to view anxiety timeline and event log."}
           </Text>
         </View>
       </SafeAreaView>
@@ -224,8 +231,8 @@ export default function HistoryPlaceholder() {
 
   const mergedEvents = React.useMemo(() => {
     const list: { id: string; timestamp: any; state?: string; anxietyScore?: number; type?: string; score?: number; isAlert?: boolean }[] = [
-      ...history.map((h) => ({ ...h, id: (h as any).id ?? `h-${(h as any).timestamp?.seconds ?? Math.random()}`, isAlert: false })),
-      ...alerts.map((a) => ({ ...a, id: (a as any).id ?? `a-${(a as any).timestamp?.seconds ?? Math.random()}`, type: (a as any).type, score: (a as any).score, isAlert: true })),
+      ...history.map((h) => ({ ...h, id: (h as any).id ?? `h-${(h as any).timestamp?.seconds ?? 0}`, isAlert: false })),
+      ...alerts.map((a) => ({ ...a, id: (a as any).id ?? `a-${(a as any).timestamp?.seconds ?? 0}`, type: (a as any).type, score: (a as any).score, isAlert: true })),
     ];
     list.sort((a, b) => {
       const ta = a.timestamp?.toDate?.()?.getTime?.() ?? (a.timestamp?.seconds ? a.timestamp.seconds * 1000 : 0);
@@ -234,6 +241,10 @@ export default function HistoryPlaceholder() {
     });
     return list;
   }, [history, alerts]);
+
+  const visibleEvents = eventLogExpanded ? mergedEvents : mergedEvents.slice(0, INITIAL_EVENTS_VISIBLE);
+  const hasMoreEvents = mergedEvents.length > INITIAL_EVENTS_VISIBLE;
+  const moreEventsCount = mergedEvents.length - INITIAL_EVENTS_VISIBLE;
 
   const renderEventItem = ({ item }: { item: (typeof mergedEvents)[0] }) => (
     <View
@@ -398,7 +409,7 @@ export default function HistoryPlaceholder() {
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={["top"]}>
       <FlatList
-        data={mergedEvents}
+        data={visibleEvents}
         keyExtractor={(item) => item.id ?? String(item.timestamp)}
         renderItem={renderEventItem}
         ListHeaderComponent={loading ? null : ListHeader}
@@ -406,7 +417,7 @@ export default function HistoryPlaceholder() {
           !loading && mergedEvents.length === 0 ? (
             <View style={[styles.emptyCard, { backgroundColor: theme.card, borderColor: theme.border, marginTop: 8 }]}>
               <Text style={[styles.emptyText, { color: theme.textMuted }]}>
-                No events in this period. Data is stored in Firestore per device and unique per user.
+                No events in this period. Connect your device; history is stored per device.
               </Text>
             </View>
           ) : null
@@ -414,16 +425,26 @@ export default function HistoryPlaceholder() {
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
         onEndReached={() => {
-          if (mergedEvents.length > 0 && hasMore && !loadingMore) loadMore();
+          if (visibleEvents.length > 0 && hasMore && !loadingMore) loadMore();
         }}
         onEndReachedThreshold={0.3}
         ListFooterComponent={
-          hasMore && mergedEvents.length > 0 && loadingMore ? (
-            <View style={styles.loadMoreWrap}>
-              <ActivityIndicator size="small" color={theme.primary} />
-              <Text style={[styles.loadMoreText, { color: theme.textMuted }]}>Loading more…</Text>
-            </View>
-          ) : null
+          <>
+            {hasMore && mergedEvents.length > 0 && loadingMore ? (
+              <View style={styles.loadMoreWrap}>
+                <ActivityIndicator size="small" color={theme.primary} />
+                <Text style={[styles.loadMoreText, { color: theme.textMuted }]}>Loading more…</Text>
+              </View>
+            ) : null}
+            {!loading && hasMoreEvents && !eventLogExpanded && (
+              <TouchableOpacity
+                style={[styles.viewMoreBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
+                onPress={() => setEventLogExpanded(true)}
+              >
+                <Text style={[styles.viewMoreBtnText, { color: theme.primary }]}>View more ({moreEventsCount} more)</Text>
+              </TouchableOpacity>
+            )}
+          </>
         }
       />
       {loading && (
@@ -463,6 +484,8 @@ const styles = StyleSheet.create({
   loadMoreBtn: { padding: 16, borderRadius: 12, borderWidth: 1, alignItems: "center", marginTop: 12 },
   loadMoreWrap: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, padding: 16 },
   loadMoreText: { fontWeight: "700" },
+  viewMoreBtn: { padding: 16, borderRadius: 12, borderWidth: 1, alignItems: "center", marginTop: 8 },
+  viewMoreBtnText: { fontSize: 15, fontWeight: "700" },
   modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", padding: 24 },
   modalContent: { borderRadius: 16, padding: 24 },
   modalTitle: { fontSize: 18, fontWeight: "800", marginBottom: 16 },
