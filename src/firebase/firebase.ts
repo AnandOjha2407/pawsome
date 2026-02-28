@@ -1,9 +1,18 @@
 /**
  * Firebase service for PawsomeBond v1 — Pipeline Architecture
- * Pipe 1: READ /devices/{deviceId}/live (Realtime DB)
- * Pipe 2: WRITE /devices/{deviceId}/commands/latest (Realtime DB) — ESP32 polls, executes, deletes
- * Pipe 3: Feedback via therapyActive in Pipe 1
- * Firestore: history, alerts, user prefs, dog profile, FCM only.
+ *
+ * Realtime Database (RTDB) paths:
+ *   - READ  /devices/{deviceId}/live              — live harness state (subscribeLiveState)
+ *   - WRITE /devices/{deviceId}/commands/latest  — calm, stop, config (sendCalmCommand, sendStopCommand, sendConfigCommand)
+ *   - WRITE /userDevices/{uid}                   — sync deviceId per user (syncDeviceIdToBackend)
+ *
+ * Firestore paths:
+ *   - devices/{deviceId}/history     — history records (loadHistory)
+ *   - devices/{deviceId}/alerts      — alerts (loadAlerts)
+ *   - devices/{deviceId}/config/autoCalm — auto-calm settings (loadDeviceConfig, writeDeviceConfig)
+ *   - users/{uid}                    — user prefs, deviceId, FCM, profile (saveUserPreferences, loadDogProfile, etc.)
+ *
+ * Pipe 3: Command feedback via therapyActive in /devices/{deviceId}/live (no separate subscription).
  */
 import "@react-native-firebase/app";
 import database from "@react-native-firebase/database";
@@ -157,25 +166,36 @@ export const PROTOCOLS = [
   { id: 8, name: "Sleep Inducer", desc: "Ultra-slow breathing for sleep" },
 ];
 
-/** Pipe 1: READ only. Call onData with normalized live state (and optionally raw for debug). */
+/** Pipe 1: READ only. Path: /devices/{deviceId}/live. Call onData with normalized live state (and optionally raw for debug). */
 export function subscribeLiveState(
   deviceId: string,
   onData: (data: LiveState | null, raw?: Record<string, unknown> | null) => void
 ): () => void {
   validateDeviceId(deviceId);
-  const ref = database().ref(`${RTDB_PATHS.devices}/${deviceId}/live`);
+  const path = `${RTDB_PATHS.devices}/${deviceId}/live`;
+  const ref = database().ref(path);
   const callback = (snapshot: any) => {
-    const val = snapshot.val();
-    if (!val || typeof val !== "object") {
+    try {
+      if (__DEV__) console.log("GOT DATA:", path, snapshot.val());
+      const val = snapshot.val();
+      if (!val || typeof val !== "object") {
+        onData(null, null);
+        return;
+      }
+      const raw = val as Record<string, unknown>;
+      const normalized = normalizeLiveState(raw);
+      onData(normalized, raw);
+    } catch (e) {
+      if (__DEV__) console.warn("[subscribeLiveState] callback error:", e);
       onData(null, null);
-      return;
     }
-    const raw = val as Record<string, unknown>;
-    const normalized = normalizeLiveState(raw);
-    onData(normalized, raw);
   };
   ref.on("value", callback);
-  return () => ref.off("value", callback);
+  return () => {
+    try {
+      ref.off("value", callback);
+    } catch (_) {}
+  };
 }
 
 /** Pipe 2: WRITE /devices/{deviceId}/commands/latest. ESP32 polls, executes, deletes. Returns "ok". */
@@ -279,19 +299,24 @@ export async function loadHistory(
       anxietyScore: r.anxietyScore,
     }));
   }
-  let q = firestore()
-    .collection("devices")
-    .doc(deviceId)
-    .collection("history")
-    .where("timestamp", ">=", startDate)
-    .where("timestamp", "<=", endDate)
-    .orderBy("timestamp", "desc")
-    .limit(limit);
-  if (startAfterTimestamp != null) {
-    q = q.startAfter(startAfterTimestamp) as any;
+  try {
+    let q = firestore()
+      .collection("devices")
+      .doc(deviceId)
+      .collection("history")
+      .where("timestamp", ">=", startDate)
+      .where("timestamp", "<=", endDate)
+      .orderBy("timestamp", "desc")
+      .limit(limit);
+    if (startAfterTimestamp != null) {
+      q = q.startAfter(startAfterTimestamp) as any;
+    }
+    const snap = await q.get();
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  } catch (e) {
+    if (__DEV__) console.warn("[loadHistory] Firestore error:", e);
+    return [];
   }
-  const snap = await q.get();
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
 export async function loadAlerts(
@@ -315,16 +340,21 @@ export async function loadAlerts(
         score: r.score,
       }));
   }
-  const snap = await firestore()
-    .collection("devices")
-    .doc(deviceId)
-    .collection("alerts")
-    .where("timestamp", ">=", startDate)
-    .where("timestamp", "<=", endDate)
-    .orderBy("timestamp", "desc")
-    .limit(limit)
-    .get();
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  try {
+    const snap = await firestore()
+      .collection("devices")
+      .doc(deviceId)
+      .collection("alerts")
+      .where("timestamp", ">=", startDate)
+      .where("timestamp", "<=", endDate)
+      .orderBy("timestamp", "desc")
+      .limit(limit)
+      .get();
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  } catch (e) {
+    if (__DEV__) console.warn("[loadAlerts] Firestore error:", e);
+    return [];
+  }
 }
 
 /** Auto-calm config written to devices/{deviceId}/config */
