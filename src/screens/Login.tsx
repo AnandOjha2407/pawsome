@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -23,19 +23,26 @@ export default function Login({ onSignUp, onSuccess }: { onSignUp?: () => void; 
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!error) return;
+    const id = setTimeout(() => setError(null), 4000);
+    return () => clearTimeout(id);
+  }, [error]);
 
   const handleLogin = async () => {
     const e = email.trim();
     const p = password;
     if (!e || !p) {
-      Alert.alert("Error", "Enter email and password.");
+      setError("Enter email and password.");
       return;
     }
     setLoading(true);
     try {
       await firebase?.signIn(e, p);
     } catch (err: any) {
-      Alert.alert("Login failed", err?.message ?? "Invalid email or password.");
+      setError(err?.message ?? "Invalid email or password.");
     } finally {
       setLoading(false);
     }
@@ -48,7 +55,7 @@ export default function Login({ onSignUp, onSuccess }: { onSignUp?: () => void; 
       await firebase.signInWithGoogle();
     } catch (err: any) {
       const message = err?.message ?? "Could not sign in with Google.";
-      Alert.alert("Google sign-in failed", message);
+      setError(message);
     } finally {
       setGoogleLoading(false);
     }
@@ -59,6 +66,11 @@ export default function Login({ onSignUp, onSuccess }: { onSignUp?: () => void; 
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.inner}>
         <Text style={[styles.title, { color: theme.textDark }]}>Log in</Text>
         <Text style={[styles.subtitle, { color: theme.textMuted }]}>Email and password</Text>
+        {error && (
+          <View style={styles.errorBox}>
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        )}
         <TextInput
           style={[styles.input, { backgroundColor: theme.card, borderColor: theme.border, color: theme.textDark }]}
           placeholder="Email"
@@ -142,6 +154,20 @@ const styles = StyleSheet.create({
   inner: { flex: 1, padding: 24, justifyContent: "center" },
   title: { fontSize: 26, fontWeight: "800", marginBottom: 8 },
   subtitle: { fontSize: 14, marginBottom: 24 },
+  errorBox: {
+    backgroundColor: "#2F1517",
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    marginBottom: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "#F85149",
+  },
+  errorText: {
+    color: "#F85149",
+    fontSize: 13,
+    fontWeight: "500",
+  },
   input: { borderWidth: 1, borderRadius: 12, padding: 14, marginBottom: 16, fontSize: 16 },
   passwordWrap: { position: "relative", marginBottom: 16 },
   passwordInput: { paddingRight: 48 },

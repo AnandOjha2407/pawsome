@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -25,21 +25,28 @@ export default function SignUp({ onBack, onSuccess }: { onBack?: () => void; onS
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!error) return;
+    const id = setTimeout(() => setError(null), 4000);
+    return () => clearTimeout(id);
+  }, [error]);
 
   const handleSignUp = async () => {
     const e = email.trim();
     const p = password;
     const cp = confirmPassword;
     if (!e || !p) {
-      Alert.alert("Error", "Enter email and password.");
+      setError("Enter email and password.");
       return;
     }
     if (p.length < 6) {
-      Alert.alert("Error", "Password must be at least 6 characters.");
+      setError("Password must be at least 6 characters.");
       return;
     }
     if (p !== cp) {
-      Alert.alert("Error", "Passwords do not match.");
+      setError("Passwords do not match.");
       return;
     }
     setLoading(true);
@@ -48,9 +55,9 @@ export default function SignUp({ onBack, onSuccess }: { onBack?: () => void; onS
     } catch (err: any) {
       const msg = err?.message ?? "Could not create account.";
       if (msg.toLowerCase().includes("email") && (msg.toLowerCase().includes("use") || msg.toLowerCase().includes("already"))) {
-        Alert.alert("Sign up failed", "This email is already in use. Try logging in instead.");
+        setError("This email is already in use. Try logging in instead.");
       } else {
-        Alert.alert("Sign up failed", msg);
+        setError(msg);
       }
     } finally {
       setLoading(false);
@@ -64,7 +71,7 @@ export default function SignUp({ onBack, onSuccess }: { onBack?: () => void; onS
       await firebase.signInWithGoogle();
     } catch (err: any) {
       const message = err?.message ?? "Could not continue with Google.";
-      Alert.alert("Google sign-in failed", message);
+      setError(message);
     } finally {
       setGoogleLoading(false);
     }
@@ -75,6 +82,11 @@ export default function SignUp({ onBack, onSuccess }: { onBack?: () => void; onS
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.inner}>
         <Text style={[styles.title, { color: theme.textDark }]}>Sign up</Text>
         <Text style={[styles.subtitle, { color: theme.textMuted }]}>Create an account</Text>
+        {error && (
+          <View style={styles.errorBox}>
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        )}
         <TextInput
           style={[styles.input, { backgroundColor: theme.card, borderColor: theme.border, color: theme.textDark }]}
           placeholder="Email"
@@ -176,6 +188,20 @@ const styles = StyleSheet.create({
   inner: { flex: 1, padding: 24, justifyContent: "center" },
   title: { fontSize: 26, fontWeight: "800", marginBottom: 8 },
   subtitle: { fontSize: 14, marginBottom: 24 },
+  errorBox: {
+    backgroundColor: "#2F1517",
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    marginBottom: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "#F85149",
+  },
+  errorText: {
+    color: "#F85149",
+    fontSize: 13,
+    fontWeight: "500",
+  },
   input: { borderWidth: 1, borderRadius: 12, padding: 14, marginBottom: 16, fontSize: 16 },
   passwordWrap: { position: "relative", marginBottom: 16 },
   passwordInput: { paddingRight: 48 },

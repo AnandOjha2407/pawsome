@@ -25,6 +25,7 @@ import {
   Easing,
   Switch,
   FlatList,
+  PermissionsAndroid,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
@@ -39,6 +40,8 @@ import { Animated as RNAnimated } from "react-native";
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { useFirebase } from "../context/FirebaseContext";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as Notifications from "expo-notifications";
 import OnboardingTutorial from "../components/OnboardingTutorial";
 import { useOnboarding } from "../hooks/useOnboarding";
 import { TUTORIAL_STEPS } from "../config/tutorialSteps";
@@ -764,6 +767,7 @@ export default function Home({ navigation }: Props) {
   const { theme: activeTheme } = useTheme();
   const { showOnboarding, completeOnboarding } = useOnboarding();
   const insets = useSafeAreaInsets();
+  const permissionsRequestedKey = "@pawsomebond_permissions_requested_v1";
 
   // Refs for tutorial measurements
   const ringsContainerRef = useRef<View>(null);
@@ -820,6 +824,62 @@ export default function Home({ navigation }: Props) {
   });
 
   const [selected, setSelected] = useState<number | null>(null);
+
+  // Request core Android permissions (location / nearby / Bluetooth + notifications) on first app open
+  useEffect(() => {
+    if (Platform.OS !== "android") {
+      // iOS: only request notifications here; Bluetooth/location are requested lazily by APIs
+      (async () => {
+        try {
+          const notifStatus = await Notifications.getPermissionsAsync();
+          if (!notifStatus.granted) {
+            await Notifications.requestPermissionsAsync();
+          }
+        } catch {
+          // ignore notification permission failures
+        }
+      })();
+      return;
+    }
+
+    (async () => {
+      try {
+        const already = await AsyncStorage.getItem(permissionsRequestedKey);
+        if (already === "true") return;
+
+        const perms: string[] = [];
+        if (PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION) {
+          perms.push(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
+        }
+        // Android 12+ Bluetooth permissions (may be undefined on older versions)
+        const scan = (PermissionsAndroid.PERMISSIONS as any).BLUETOOTH_SCAN;
+        const connect = (PermissionsAndroid.PERMISSIONS as any).BLUETOOTH_CONNECT;
+        if (scan) perms.push(scan);
+        if (connect) perms.push(connect);
+
+        if (perms.length > 0) {
+          try {
+            await PermissionsAndroid.requestMultiple(perms);
+          } catch {
+            // ignore; user can still enable from system settings
+          }
+        }
+
+        try {
+          const notifStatus = await Notifications.getPermissionsAsync();
+          if (!notifStatus.granted) {
+            await Notifications.requestPermissionsAsync();
+          }
+        } catch {
+          // ignore notification permission failures
+        }
+
+        await AsyncStorage.setItem(permissionsRequestedKey, "true");
+      } catch {
+        // ignore any unexpected errors – never crash home
+      }
+    })();
+  }, []);
 
   // Register measurement callbacks for tutorial
   useEffect(() => {

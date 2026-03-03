@@ -1028,7 +1028,13 @@ export default function Settings() {
       {/* 5.5 Sign Out at bottom */}
       <View style={ui.section}>
         <TouchableOpacity
-          style={[ui.ghostBtn, { borderColor: theme.border, backgroundColor: theme.card }]}
+          style={[
+            ui.primaryBtn,
+            {
+              backgroundColor: "#F85149",
+              marginTop: 4,
+            },
+          ]}
           onPress={async () => {
             try {
               await firebase?.signOut();
@@ -1048,14 +1054,23 @@ export default function Settings() {
             }
           }}
         >
-          <Text style={[ui.ghostBtnText, { color: theme.orange }]}>Sign out</Text>
+          <Text style={[ui.primaryBtnText, { color: "#fff" }]}>Sign out</Text>
         </TouchableOpacity>
       </View>
 
       {/* Actions */}
       <View style={ui.section}>
-        <TouchableOpacity style={[ui.ghostBtn, { borderColor: theme.border, backgroundColor: theme.card }]} onPress={handleResetAssignments}>
-          <Text style={[ui.ghostBtnText, { color: theme.orange }]}>Reset all settings</Text>
+        <TouchableOpacity
+          style={[
+            ui.ghostBtn,
+            {
+              borderColor: "#F85149",
+              backgroundColor: "transparent",
+            },
+          ]}
+          onPress={handleResetAssignments}
+        >
+          <Text style={[ui.ghostBtnText, { color: "#F85149" }]}>Reset all settings</Text>
         </TouchableOpacity>
       </View>
 

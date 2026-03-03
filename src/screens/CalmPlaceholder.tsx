@@ -167,9 +167,6 @@ export default function CalmPlaceholder() {
                 },
               ]}
             >
-              <Text style={[styles.protocolNum, { color: protocol === p.id ? "#000" : theme.textMuted }]}>
-                {p.id}
-              </Text>
               <Text
                 style={[styles.protocolName, { color: protocol === p.id ? "#000" : theme.textDark }]}
                 numberOfLines={1}
