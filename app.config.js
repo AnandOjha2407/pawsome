@@ -1,7 +1,8 @@
 export default {
   expo: {
     name: "Pawsome",
-    slug: "doggpt",
+    slug: "pawsomebond",
+    owner: "bushra2002",
     version: "1.0.0",
     orientation: "portrait",
     icon: "./assets/images/intro_logo2.png",
@@ -88,7 +89,7 @@ export default {
     },
 
     updates: {
-      url: "https://u.expo.dev/383b6e8b-bd84-448c-96a1-f212946a0d6c",
+      url: "https://u.expo.dev/afd29c35-682f-41e6-8a8c-5fd8cb56037e",
       enabled: true,
       checkAutomatically: "ON_LOAD",
       fallbackToCacheTimeout: 0
@@ -100,7 +101,7 @@ export default {
       router: {},
       API_BASE: "http://192.168.1.4:3000",
       eas: {
-        projectId: "383b6e8b-bd84-448c-96a1-f212946a0d6c"
+        projectId: "afd29c35-682f-41e6-8a8c-5fd8cb56037e"
       }
     }
   }

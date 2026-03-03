@@ -26,6 +26,7 @@ import { usePageOnboarding } from "../hooks/usePageOnboarding";
 import { useFirebase } from "../context/FirebaseContext";
 import { TutorialStep } from "../components/OnboardingTutorial";
 import * as Updates from "expo-updates";
+import { resetOnboarding } from "../storage/onboarding";
 import {
   writeDeviceConfig,
   loadDeviceConfig,
@@ -750,56 +751,104 @@ export default function Settings() {
               <Text style={[ui.valueText, { color: theme.textDark, minWidth: 28 }]}>{autoCalmThreshold}</Text>
             </View>
             <Text style={[ui.label, { color: theme.textMuted, marginTop: 12 }]}>Default protocol</Text>
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 6 }}>
-              {PROTOCOLS.slice(0, 8).map((p) => (
-                <TouchableOpacity
-                  key={p.id}
-                  onPress={() => {
-                    setAutoCalmProtocol(p.id);
-                    if (firebase?.deviceId) {
-                      writeDeviceConfig(firebase.deviceId, { defaultProtocol: p.id }).catch(() => {});
-                      sendConfigCommand(firebase.deviceId, {
-                        autoCalmEnabled,
-                        autoCalmThreshold,
-                        defaultProtocol: p.id,
-                        defaultIntensity: autoCalmIntensity,
-                      }).catch(() => {});
-                    }
-                  }}
-                  style={[
-                    { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1 },
-                    autoCalmProtocol === p.id ? { backgroundColor: theme.primary, borderColor: theme.primary } : { backgroundColor: theme.card, borderColor: theme.border },
-                  ]}
-                >
-                  <Text style={{ color: autoCalmProtocol === p.id ? "#000" : theme.textDark, fontSize: 12, fontWeight: "600" }}>{p.name}</Text>
-                </TouchableOpacity>
-              ))}
+            <View style={{ marginTop: 6 }}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ flexDirection: "row", gap: 8, paddingVertical: 2 }}
+              >
+                {PROTOCOLS.slice(0, 8).map((p) => (
+                  <TouchableOpacity
+                    key={p.id}
+                    onPress={() => {
+                      setAutoCalmProtocol(p.id);
+                      if (firebase?.deviceId) {
+                        writeDeviceConfig(firebase.deviceId, { defaultProtocol: p.id }).catch(() => {});
+                        sendConfigCommand(firebase.deviceId, {
+                          autoCalmEnabled,
+                          autoCalmThreshold,
+                          defaultProtocol: p.id,
+                          defaultIntensity: autoCalmIntensity,
+                        }).catch(() => {});
+                      }
+                    }}
+                    style={[
+                      {
+                        paddingVertical: 8,
+                        paddingHorizontal: 12,
+                        borderRadius: 999,
+                        borderWidth: 1,
+                        minWidth: 120,
+                        alignItems: "center",
+                        justifyContent: "center",
+                      },
+                      autoCalmProtocol === p.id
+                        ? { backgroundColor: theme.primary, borderColor: theme.primary }
+                        : { backgroundColor: theme.card, borderColor: theme.border },
+                    ]}
+                  >
+                    <Text
+                      style={{
+                        color: autoCalmProtocol === p.id ? "#000" : theme.textDark,
+                        fontSize: 12,
+                        fontWeight: "600",
+                      }}
+                      numberOfLines={1}
+                    >
+                      {p.name}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
             </View>
             <Text style={[ui.label, { color: theme.textMuted, marginTop: 12 }]}>Default intensity (1–5)</Text>
-            <View style={{ flexDirection: "row", gap: 8, marginTop: 6 }}>
-              {[1, 2, 3, 4, 5].map((i) => (
-                <TouchableOpacity
-                  key={i}
-                  onPress={() => {
-                    setAutoCalmIntensity(i);
-                    if (firebase?.deviceId) {
-                      writeDeviceConfig(firebase.deviceId, { defaultIntensity: i }).catch(() => {});
-                      sendConfigCommand(firebase.deviceId, {
-                        autoCalmEnabled,
-                        autoCalmThreshold,
-                        defaultProtocol: autoCalmProtocol,
-                        defaultIntensity: i,
-                      }).catch(() => {});
-                    }
-                  }}
-                  style={[
-                    { paddingVertical: 10, paddingHorizontal: 14, borderRadius: 8, borderWidth: 1 },
-                    autoCalmIntensity === i ? { backgroundColor: theme.primary, borderColor: theme.primary } : { backgroundColor: theme.card, borderColor: theme.border },
-                  ]}
-                >
-                  <Text style={{ color: autoCalmIntensity === i ? "#000" : theme.textDark, fontWeight: "700" }}>{i}</Text>
-                </TouchableOpacity>
-              ))}
+            <View style={{ marginTop: 6 }}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ flexDirection: "row", gap: 8, paddingVertical: 2 }}
+              >
+                {[1, 2, 3, 4, 5].map((i) => (
+                  <TouchableOpacity
+                    key={i}
+                    onPress={() => {
+                      setAutoCalmIntensity(i);
+                      if (firebase?.deviceId) {
+                        writeDeviceConfig(firebase.deviceId, { defaultIntensity: i }).catch(() => {});
+                        sendConfigCommand(firebase.deviceId, {
+                          autoCalmEnabled,
+                          autoCalmThreshold,
+                          defaultProtocol: autoCalmProtocol,
+                          defaultIntensity: i,
+                        }).catch(() => {});
+                      }
+                    }}
+                    style={[
+                      {
+                        paddingVertical: 10,
+                        paddingHorizontal: 16,
+                        borderRadius: 999,
+                        borderWidth: 1,
+                        minWidth: 52,
+                        alignItems: "center",
+                        justifyContent: "center",
+                      },
+                      autoCalmIntensity === i
+                        ? { backgroundColor: theme.primary, borderColor: theme.primary }
+                        : { backgroundColor: theme.card, borderColor: theme.border },
+                    ]}
+                  >
+                    <Text
+                      style={{
+                        color: autoCalmIntensity === i ? "#000" : theme.textDark,
+                        fontWeight: "700",
+                      }}
+                    >
+                      {i}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
             </View>
           </>
         )}
@@ -985,6 +1034,17 @@ export default function Settings() {
               await firebase?.signOut();
             } catch (e) {
               console.warn("Sign out failed", e);
+            } finally {
+              try {
+                await resetOnboarding();
+              } catch {
+                // ignore onboarding reset failures
+              }
+              try {
+                router.replace("/login" as any);
+              } catch (navErr) {
+                console.warn("Failed to navigate to login after sign out", navErr);
+              }
             }
           }}
         >

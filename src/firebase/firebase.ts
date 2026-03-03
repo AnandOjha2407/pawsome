@@ -19,7 +19,9 @@ import database from "@react-native-firebase/database";
 import firestore from "@react-native-firebase/firestore";
 import auth from "@react-native-firebase/auth";
 import messaging from "@react-native-firebase/messaging";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { MOCK_DEVICE_ID, getMockHistory, getMockAlerts } from "../mock/mockData";
+import { DOG_PROFILE_LOCAL_KEY } from "../storage/constants";
 
 const COLLECTIONS = { devices: "devices", users: "users", commands: "commands", history: "history", alerts: "alerts", config: "config", profile: "profile" } as const;
 const RTDB_PATHS = { devices: "devices", userDevices: "userDevices", commandsLatest: "commands/latest" } as const;
@@ -493,6 +495,29 @@ export async function saveDogProfile(uid: string, profile: Partial<DogProfile>):
     .collection("profile")
     .doc("dog")
     .set(payload, { merge: true });
+}
+
+/** Fallback: save dog profile to device when Firestore is unavailable (e.g. rules, network, DB not enabled). */
+export async function saveDogProfileLocal(profile: Partial<DogProfile>): Promise<void> {
+  await AsyncStorage.setItem(DOG_PROFILE_LOCAL_KEY, JSON.stringify(profile));
+}
+
+/** Load dog profile from local fallback (used when Firestore fails or returns null). */
+export async function loadDogProfileLocal(): Promise<DogProfile | null> {
+  try {
+    const raw = await AsyncStorage.getItem(DOG_PROFILE_LOCAL_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw) as Record<string, unknown>;
+    if (!data?.name) return null;
+    return {
+      name: String(data.name),
+      breed: data.breed != null ? String(data.breed) : undefined,
+      age: typeof data.age === "number" ? data.age : undefined,
+      weight: typeof data.weight === "number" ? data.weight : undefined,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /** Request FCM permission and return token if granted. Returns null on any error. */

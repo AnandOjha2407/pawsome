@@ -1,0 +1,19 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Users: only the signed-in user can read/write their own doc and subcollections (e.g. profile/dog)
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+      match /{subcollection}/{doc} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+    }
+    // Devices: app reads/writes by deviceId (e.g. PB-001). Optional: restrict to user's deviceId via users doc.
+    match /devices/{deviceId} {
+      allow read, write: if request.auth != null;
+      match /{subcollection}/{doc} {
+        allow read, write: if request.auth != null;
+      }
+    }
+  }
+}

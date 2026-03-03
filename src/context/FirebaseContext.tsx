@@ -46,7 +46,7 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     try {
       GoogleSignin.configure({
-        webClientId: "194207887869-35bl3edlglngcphtvsc5qcg6fsfc5q36.apps.googleusercontent.com",
+        webClientId: "815796708002-d0av1gcigvdlu19bgi542636rir2mtqe.apps.googleusercontent.com",
         offlineAccess: true,
       });
     } catch (e) {

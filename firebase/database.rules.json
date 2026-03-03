@@ -1,0 +1,24 @@
+{
+  "rules": {
+    "userDevices": {
+      "$uid": {
+        ".read": "auth != null && auth.uid == $uid",
+        ".write": "auth != null && auth.uid == $uid"
+      }
+    },
+    "devices": {
+      "$deviceId": {
+        ".read": "auth != null",
+        ".write": "auth != null",
+        "live": {
+          ".read": "auth != null",
+          ".write": "true"
+        },
+        "commands": {
+          ".read": "auth != null",
+          ".write": "auth != null"
+        }
+      }
+    }
+  }
+}

@@ -15,7 +15,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { useTheme } from "../ThemeProvider";
 import { useFirebase } from "../context/FirebaseContext";
-import { loadDogProfile, saveDogProfile, type DogProfile } from "../firebase/firebase";
+import { loadDogProfile, loadDogProfileLocal, saveDogProfile, saveDogProfileLocal, type DogProfile } from "../firebase/firebase";
 import { MOCK_DEVICE_ID } from "../mock/mockData";
 
 export default function DogProfileSetup() {
@@ -32,18 +32,34 @@ export default function DogProfileSetup() {
   useEffect(() => {
     let mounted = true;
     const uid = firebase?.user?.uid;
-    if (!uid) return;
+    if (!uid) {
+      setInitialLoad(false);
+      return;
+    }
     loadDogProfile(uid)
       .then((profile) => {
-        if (!mounted) return;
+        if (!mounted) return profile;
         if (profile) {
           setName(profile.name ?? "");
           setBreed(profile.breed ?? "");
           setAge(profile.age != null ? String(profile.age) : "");
           setWeight(profile.weight != null ? String(profile.weight) : "");
         }
+        return profile;
       })
-      .catch(() => { if (mounted) setInitialLoad(false); })
+      .catch(() => null)
+      .then((firestoreProfile) => {
+        if (!mounted || firestoreProfile) return null;
+        return loadDogProfileLocal();
+      })
+      .then((local) => {
+        if (!mounted || !local) return;
+        setName(local.name ?? "");
+        setBreed(local.breed ?? "");
+        setAge(local.age != null ? String(local.age) : "");
+        setWeight(local.weight != null ? String(local.weight) : "");
+      })
+      .catch(() => {})
       .finally(() => { if (mounted) setInitialLoad(false); });
     return () => { mounted = false; };
   }, [firebase?.user?.uid]);
@@ -55,21 +71,39 @@ export default function DogProfileSetup() {
       return;
     }
     const uid = firebase?.user?.uid;
-    if (!uid) return;
+    if (!uid) {
+      Alert.alert("Sign in needed", "Please sign in again.");
+      router.replace("/login" as any);
+      return;
+    }
     setLoading(true);
+    const ageNum = age.trim() ? parseInt(age, 10) : NaN;
+    const weightNum = weight.trim() ? parseFloat(weight) : NaN;
+    const profile: Partial<DogProfile> = {
+      name: n,
+      breed: breed.trim() || undefined,
+      age: Number.isFinite(ageNum) ? ageNum : undefined,
+      weight: Number.isFinite(weightNum) ? weightNum : undefined,
+    };
+    const saveWithTimeout = (ms: number) =>
+      Promise.race([
+        saveDogProfile(uid, profile),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Firestore timeout")), ms)
+        ),
+      ]);
     try {
-      const ageNum = age.trim() ? parseInt(age, 10) : NaN;
-      const weightNum = weight.trim() ? parseFloat(weight) : NaN;
-      const profile: Partial<DogProfile> = {
-        name: n,
-        breed: breed.trim() || undefined,
-        age: Number.isFinite(ageNum) ? ageNum : undefined,
-        weight: Number.isFinite(weightNum) ? weightNum : undefined,
-      };
-      await saveDogProfile(uid, profile);
+      await saveWithTimeout(12000);
       router.replace("/pair" as any);
-    } catch (e: any) {
-      Alert.alert("Error", e?.message ?? "Could not save profile.");
+    } catch (e: unknown) {
+      await saveDogProfileLocal(profile).catch(() => {});
+      const msg =
+        e instanceof Error ? e.message : typeof e === "string" ? e : "check internet or Firebase";
+      Alert.alert(
+        "Saved on device",
+        `Profile couldn't sync to cloud (${msg}). You can continue.`,
+        [{ text: "OK", onPress: () => router.replace("/pair" as any) }]
+      );
     } finally {
       setLoading(false);
     }
