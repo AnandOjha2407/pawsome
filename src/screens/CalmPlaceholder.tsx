@@ -190,7 +190,11 @@ export default function CalmPlaceholder() {
         <Text style={[styles.sectionLabel, { color: theme.textDark, marginTop: 20 }]}>
           Intensity
         </Text>
-        <View style={styles.intensityRow}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.intensityRow}
+        >
           {([1, 2, 3, 4, 5] as const).map((i) => (
             <TouchableOpacity
               key={i}
@@ -209,7 +213,7 @@ export default function CalmPlaceholder() {
               </Text>
             </TouchableOpacity>
           ))}
-        </View>
+        </ScrollView>
 
         {/* Duration picker: 30s, 60s, 90s, 120s — 5.3 */}
         <Text style={[styles.sectionLabel, { color: theme.textDark, marginTop: 20 }]}>
@@ -302,14 +306,21 @@ const styles = StyleSheet.create({
   protocolNum: { fontSize: 12, fontWeight: "600", marginBottom: 4 },
   protocolName: { fontSize: 13, fontWeight: "600" },
   protocolDesc: { fontSize: 11, marginTop: 4, opacity: 0.9 },
-  intensityRow: { flexDirection: "row", gap: 10 },
-  intensityLabel: { fontSize: 10, marginTop: 2 },
+  intensityRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 4,
+  },
+  intensityLabel: { fontSize: 11, marginTop: 2 },
   intensityBtn: {
-    flex: 1,
-    padding: 16,
-    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 999,
     borderWidth: 1,
     alignItems: "center",
+    justifyContent: "center",
+    minWidth: 80,
   },
   durationRow: { flexDirection: "row", gap: 10 },
   durationBtn: {

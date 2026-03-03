@@ -106,11 +106,11 @@ function LiveStateCard({ activeTheme }: { activeTheme: Theme }) {
   const firebase = useFirebase();
   const live = firebase?.liveState;
   const STATE_ICON: Record<string, any> = {
-    SLEEPING: require("../assets/custom_emoji/sleeping.png"),
-    CALM: require("../assets/custom_emoji/relaxed.png"),
-    ALERT: require("../assets/custom_emoji/alert.png"),
-    ANXIOUS: require("../assets/custom_emoji/worried.png"),
-    ACTIVE: require("../assets/custom_emoji/active.png"),
+    SLEEPING: require("../../assets/custom_emoji/sleeping.png"),
+    CALM: require("../../assets/custom_emoji/relaxed.png"),
+    ALERT: require("../../assets/custom_emoji/alert.png"),
+    ANXIOUS: require("../../assets/custom_emoji/worried.png"),
+    ACTIVE: require("../../assets/custom_emoji/active.png"),
   };
   const state = live?.state ?? "CALM";
   const iconSource = STATE_ICON[state] ?? STATE_ICON.CALM;

@@ -85,10 +85,19 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
   const signInWithGoogle = useCallback(async () => {
     try {
       await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
-      const { idToken } = await GoogleSignin.signIn();
+      const userInfo = await GoogleSignin.signIn();
+      let idToken = userInfo.idToken;
+
+      // Fallback: some devices return tokens via getTokens()
       if (!idToken) {
-        throw new Error("Google sign-in failed: missing ID token.");
+        const tokens = await GoogleSignin.getTokens();
+        idToken = tokens.idToken;
       }
+
+      if (!idToken) {
+        throw new Error("Google sign-in failed: missing ID token. Try removing this Google account from your device and signing in again.");
+      }
+
       const googleCredential = auth.GoogleAuthProvider.credential(idToken);
       await auth().signInWithCredential(googleCredential);
     } catch (e: any) {

@@ -21,11 +21,11 @@ import { bleManager } from "../ble/BLEManager";
 
 // State emoji/icon and glow per spec 5.2 — all from device state
 const STATE_ICON: Record<string, any> = {
-  SLEEPING: require("../assets/custom_emoji/sleeping.png"),
-  CALM: require("../assets/custom_emoji/relaxed.png"),
-  ALERT: require("../assets/custom_emoji/alert.png"),
-  ANXIOUS: require("../assets/custom_emoji/worried.png"),
-  ACTIVE: require("../assets/custom_emoji/active.png"),
+  SLEEPING: require("../../assets/custom_emoji/sleeping.png"),
+  CALM: require("../../assets/custom_emoji/relaxed.png"),
+  ALERT: require("../../assets/custom_emoji/alert.png"),
+  ANXIOUS: require("../../assets/custom_emoji/worried.png"),
+  ACTIVE: require("../../assets/custom_emoji/active.png"),
 };
 
 // Glow colors per spec (opacity in hex: 10%=1A, 15%=26, 20%=33)
