@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  Image,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useTheme } from "../ThemeProvider";
@@ -19,12 +20,12 @@ import { THERAPY_ACTIVE_DISPLAY } from "../firebase/firebase";
 import { bleManager } from "../ble/BLEManager";
 
 // State emoji/icon and glow per spec 5.2 — all from device state
-const STATE_EMOJI: Record<string, string> = {
-  SLEEPING: "🌙",  // Moon / sleeping face
-  CALM: "😌",      // Relaxed smile
-  ALERT: "👀",     // Eyes / surprised
-  ANXIOUS: "😟",   // Worried face
-  ACTIVE: "🏃",    // Running / playing
+const STATE_ICON: Record<string, any> = {
+  SLEEPING: require("../assets/custom_emoji/sleeping.png"),
+  CALM: require("../assets/custom_emoji/relaxed.png"),
+  ALERT: require("../assets/custom_emoji/alert.png"),
+  ANXIOUS: require("../assets/custom_emoji/worried.png"),
+  ACTIVE: require("../assets/custom_emoji/active.png"),
 };
 
 // Glow colors per spec (opacity in hex: 10%=1A, 15%=26, 20%=33)
@@ -83,8 +84,8 @@ export default function Dashboard() {
     }
   };
 
-  const state = (live?.state ?? "CALM") as keyof typeof STATE_EMOJI;
-  const emoji = STATE_EMOJI[state] ?? "😌";
+  const state = (live?.state ?? "CALM") as keyof typeof STATE_ICON;
+  const iconSource = STATE_ICON[state] ?? STATE_ICON.CALM;
   const glowColor = STATE_GLOW[state] ?? theme.primary + "26";
   // Handout: device lastUpdated is "seconds since boot". We show time since app last received data.
   const receivedAt = firebase?.liveReceivedAt ?? null;
@@ -185,12 +186,12 @@ export default function Dashboard() {
           {isAnxious ? (
             <Animated.View style={[styles.stateEmojiWrap, { transform: [{ scale: pulseAnim }] }]}>
               <View style={[styles.glowCircle, { backgroundColor: glowColor }]} />
-              <Text style={styles.stateEmoji}>{emoji}</Text>
+              <Image source={iconSource} style={styles.stateIcon} resizeMode="contain" />
             </Animated.View>
           ) : (
             <View style={styles.stateEmojiWrap}>
               <View style={[styles.glowCircle, { backgroundColor: glowColor }]} />
-              <Text style={styles.stateEmoji}>{emoji}</Text>
+              <Image source={iconSource} style={styles.stateIcon} resizeMode="contain" />
             </View>
           )}
           <Text style={[styles.stateLabel, { color: theme.textDark }]}>{state}</Text>
@@ -324,11 +325,14 @@ const styles = StyleSheet.create({
   stateEmojiWrap: { alignItems: "center", justifyContent: "center", marginBottom: 8 },
   glowCircle: {
     position: "absolute",
-    width: 100,
-    height: 100,
-    borderRadius: 50,
+    width: 96,
+    height: 96,
+    borderRadius: 48,
   },
-  stateEmoji: { fontSize: 64 },
+  stateIcon: {
+    width: 72,
+    height: 72,
+  },
   stateLabel: { fontSize: 24, fontWeight: "800" },
   confidence: { fontSize: 14, marginTop: 6 },
   calibrationRow: {

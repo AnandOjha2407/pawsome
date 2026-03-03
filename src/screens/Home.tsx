@@ -105,15 +105,15 @@ function AnimatedButton({
 function LiveStateCard({ activeTheme }: { activeTheme: Theme }) {
   const firebase = useFirebase();
   const live = firebase?.liveState;
-  const STATE_EMOJI: Record<string, string> = {
-    SLEEPING: "🌙",
-    CALM: "😌",
-    ALERT: "👀",
-    ANXIOUS: "😟",
-    ACTIVE: "🏃",
+  const STATE_ICON: Record<string, any> = {
+    SLEEPING: require("../assets/custom_emoji/sleeping.png"),
+    CALM: require("../assets/custom_emoji/relaxed.png"),
+    ALERT: require("../assets/custom_emoji/alert.png"),
+    ANXIOUS: require("../assets/custom_emoji/worried.png"),
+    ACTIVE: require("../assets/custom_emoji/active.png"),
   };
   const state = live?.state ?? "CALM";
-  const emoji = STATE_EMOJI[state] ?? "😌";
+  const iconSource = STATE_ICON[state] ?? STATE_ICON.CALM;
   return (
     <View
       style={{
@@ -129,8 +129,20 @@ function LiveStateCard({ activeTheme }: { activeTheme: Theme }) {
         minHeight: 140,
       }}
     >
-      <Text style={{ fontSize: 48 }}>{emoji}</Text>
-      <Text style={{ fontWeight: "700", fontSize: 18, marginTop: 8, color: activeTheme.textDark }}>{state}</Text>
+      <View
+        style={{
+          width: 80,
+          height: 80,
+          borderRadius: 40,
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: activeTheme.background,
+          marginBottom: 8,
+        }}
+      >
+        <Image source={iconSource} style={{ width: 56, height: 56 }} resizeMode="contain" />
+      </View>
+      <Text style={{ fontWeight: "700", fontSize: 18, marginTop: 4, color: activeTheme.textDark }}>{state}</Text>
       <Text style={{ fontSize: 13, marginTop: 4, color: activeTheme.textMuted }}>
         {live
           ? `Anxiety: ${live.anxietyScore}/100 • Confidence: ${live.confidence}%`
