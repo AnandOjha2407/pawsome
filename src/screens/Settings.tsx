@@ -724,12 +724,14 @@ export default function Settings() {
           <>
             <Text style={[ui.label, { color: theme.textMuted, marginTop: 12 }]}>Anxiety threshold (0–100, default 60)</Text>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 12, marginTop: 8 }}>
+              {/* Guard + defined numeric props to avoid RNCSliderProps SIGSEGV (value/min/max always valid numbers) */}
+              {typeof autoCalmThreshold === "number" && (
               <Slider
                 style={{ flex: 1, height: 24 }}
                 minimumValue={0}
                 maximumValue={100}
                 step={1}
-                value={autoCalmThreshold}
+                value={Number.isFinite(autoCalmThreshold) ? autoCalmThreshold : 60}
                 onValueChange={(v) => setAutoCalmThreshold(Math.round(v))}
                 onSlidingComplete={(v) => {
                   const n = Math.round(v);
@@ -748,7 +750,8 @@ export default function Settings() {
                 maximumTrackTintColor={theme.border}
                 thumbTintColor={theme.primary}
               />
-              <Text style={[ui.valueText, { color: theme.textDark, minWidth: 28 }]}>{autoCalmThreshold}</Text>
+              )}
+              <Text style={[ui.valueText, { color: theme.textDark, minWidth: 28 }]}>{autoCalmThreshold ?? 60}</Text>
             </View>
             <Text style={[ui.label, { color: theme.textMuted, marginTop: 12 }]}>Default protocol</Text>
             <View style={{ marginTop: 6 }}>

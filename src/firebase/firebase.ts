@@ -13,10 +13,26 @@
  *   - users/{uid}                    — user prefs, deviceId, FCM, profile (saveUserPreferences, loadDogProfile, etc.)
  *
  * Pipe 3: Command feedback via therapyActive in /devices/{deviceId}/live (no separate subscription).
+ *
+ * Uses modular Firestore API (getFirestore, collection, doc, setDoc, getDoc, getDocs, query, where, orderBy, limit, startAfter, serverTimestamp) to avoid deprecated namespaced API.
  */
 import "@react-native-firebase/app";
 import database from "@react-native-firebase/database";
-import firestore from "@react-native-firebase/firestore";
+import {
+  getFirestore,
+  collection,
+  doc,
+  setDoc,
+  getDoc,
+  getDocs,
+  query,
+  where,
+  orderBy,
+  limit,
+  startAfter,
+  serverTimestamp,
+  Timestamp,
+} from "@react-native-firebase/firestore";
 import auth from "@react-native-firebase/auth";
 import messaging from "@react-native-firebase/messaging";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -296,24 +312,32 @@ export async function loadHistory(
     }
     return filtered.slice(0, limit).map((r) => ({
       id: r.id,
-      timestamp: firestore.Timestamp.fromDate(r.timestamp),
+      timestamp: Timestamp.fromDate(r.timestamp),
       state: r.state,
       anxietyScore: r.anxietyScore,
     }));
   }
   try {
-    let q = firestore()
-      .collection("devices")
-      .doc(deviceId)
-      .collection("history")
-      .where("timestamp", ">=", startDate)
-      .where("timestamp", "<=", endDate)
-      .orderBy("timestamp", "desc")
-      .limit(limit);
-    if (startAfterTimestamp != null) {
-      q = q.startAfter(startAfterTimestamp) as any;
-    }
-    const snap = await q.get();
+    const db = getFirestore();
+    const historyRef = collection(doc(collection(db, "devices"), deviceId), "history");
+    const q =
+      startAfterTimestamp != null
+        ? query(
+            historyRef,
+            where("timestamp", ">=", startDate),
+            where("timestamp", "<=", endDate),
+            orderBy("timestamp", "desc"),
+            limit(limit),
+            startAfter(startAfterTimestamp)
+          )
+        : query(
+            historyRef,
+            where("timestamp", ">=", startDate),
+            where("timestamp", "<=", endDate),
+            orderBy("timestamp", "desc"),
+            limit(limit)
+          );
+    const snap = await getDocs(q);
     return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
   } catch (e) {
     if (__DEV__) console.warn("[loadHistory] Firestore error:", e);
@@ -337,21 +361,22 @@ export async function loadAlerts(
       .slice(0, limit)
       .map((r) => ({
         id: r.id,
-        timestamp: firestore.Timestamp.fromDate(r.timestamp),
+        timestamp: Timestamp.fromDate(r.timestamp),
         type: r.type,
         score: r.score,
       }));
   }
   try {
-    const snap = await firestore()
-      .collection("devices")
-      .doc(deviceId)
-      .collection("alerts")
-      .where("timestamp", ">=", startDate)
-      .where("timestamp", "<=", endDate)
-      .orderBy("timestamp", "desc")
-      .limit(limit)
-      .get();
+    const db = getFirestore();
+    const alertsRef = collection(doc(collection(db, "devices"), deviceId), "alerts");
+    const q = query(
+      alertsRef,
+      where("timestamp", ">=", startDate),
+      where("timestamp", "<=", endDate),
+      orderBy("timestamp", "desc"),
+      limit(limit)
+    );
+    const snap = await getDocs(q);
     return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
   } catch (e) {
     if (__DEV__) console.warn("[loadAlerts] Firestore error:", e);
@@ -371,24 +396,18 @@ export async function writeDeviceConfig(
   deviceId: string,
   config: Partial<AutoCalmConfig>
 ): Promise<void> {
-  const ref = firestore()
-    .collection("devices")
-    .doc(deviceId)
-    .collection("config")
-    .doc("autoCalm");
-  await ref.set({ ...config, updatedAt: firestore.FieldValue.serverTimestamp() }, { merge: true });
+  const db = getFirestore();
+  const configRef = doc(collection(doc(collection(db, "devices"), deviceId), "config"), "autoCalm");
+  await setDoc(configRef, { ...config, updatedAt: serverTimestamp() }, { merge: true });
 }
 
 export async function loadDeviceConfig(
   deviceId: string
 ): Promise<AutoCalmConfig | null> {
-  const doc = await firestore()
-    .collection("devices")
-    .doc(deviceId)
-    .collection("config")
-    .doc("autoCalm")
-    .get();
-  const data = doc.data();
+  const db = getFirestore();
+  const configRef = doc(collection(doc(collection(db, "devices"), deviceId), "config"), "autoCalm");
+  const snapshot = await getDoc(configRef);
+  const data = snapshot.data();
   if (!data) return null;
   return {
     enabled: !!data.enabled,
@@ -400,18 +419,16 @@ export async function loadDeviceConfig(
 
 /** Store FCM token at /users/{uid} (field fcmToken) — 7. Push Notifications. Refresh on app start and on token refresh. */
 export async function saveFcmToken(uid: string, token: string): Promise<void> {
-  await firestore()
-    .collection(COLLECTIONS.users)
-    .doc(uid)
-    .set({ fcmToken: token, fcmTokenUpdatedAt: firestore.FieldValue.serverTimestamp() }, { merge: true });
+  const db = getFirestore();
+  const userRef = doc(collection(db, COLLECTIONS.users), uid);
+  await setDoc(userRef, { fcmToken: token, fcmTokenUpdatedAt: serverTimestamp() }, { merge: true });
 }
 
 /** Sync deviceId to backend so security rules can enforce device ownership. Call when user sets or clears device ID. */
 export async function syncDeviceIdToBackend(uid: string, deviceId: string | null): Promise<void> {
-  await firestore()
-    .collection(COLLECTIONS.users)
-    .doc(uid)
-    .set({ deviceId: deviceId ?? null, deviceIdUpdatedAt: firestore.FieldValue.serverTimestamp() }, { merge: true });
+  const db = getFirestore();
+  const userRef = doc(collection(db, COLLECTIONS.users), uid);
+  await setDoc(userRef, { deviceId: deviceId ?? null, deviceIdUpdatedAt: serverTimestamp() }, { merge: true });
   const rtdbRef = database().ref(`${RTDB_PATHS.userDevices}/${uid}`);
   if (deviceId != null && deviceId.trim().length > 0) {
     await rtdbRef.set(deviceId.trim());
@@ -436,8 +453,10 @@ const DEFAULT_NOTIFICATION_PREFS: UserNotificationPreferences = {
 };
 
 export async function loadUserPreferences(uid: string): Promise<UserNotificationPreferences> {
-  const doc = await firestore().collection("users").doc(uid).get();
-  const data = doc.data();
+  const db = getFirestore();
+  const userRef = doc(collection(db, "users"), uid);
+  const snapshot = await getDoc(userRef);
+  const data = snapshot.data();
   const prefs = data?.notificationPreferences ?? data?.preferences;
   if (!prefs || typeof prefs !== "object") return DEFAULT_NOTIFICATION_PREFS;
   return {
@@ -452,16 +471,16 @@ export async function saveUserPreferences(
   uid: string,
   prefs: Partial<UserNotificationPreferences>
 ): Promise<void> {
-  await firestore()
-    .collection("users")
-    .doc(uid)
-    .set(
-      {
-        notificationPreferences: { ...DEFAULT_NOTIFICATION_PREFS, ...prefs },
-        preferencesUpdatedAt: firestore.FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
+  const db = getFirestore();
+  const userRef = doc(collection(db, "users"), uid);
+  await setDoc(
+    userRef,
+    {
+      notificationPreferences: { ...DEFAULT_NOTIFICATION_PREFS, ...prefs },
+      preferencesUpdatedAt: serverTimestamp(),
+    },
+    { merge: true }
+  );
 }
 
 /** Dog profile (5.5) — stored in Firestore users/{uid}/profile (single dog for v1) */
@@ -473,8 +492,10 @@ export type DogProfile = {
 };
 
 export async function loadDogProfile(uid: string): Promise<DogProfile | null> {
-  const doc = await firestore().collection("users").doc(uid).collection("profile").doc("dog").get();
-  const data = doc.data();
+  const db = getFirestore();
+  const profileRef = doc(collection(doc(collection(db, "users"), uid), "profile"), "dog");
+  const snapshot = await getDoc(profileRef);
+  const data = snapshot.data();
   if (!data?.name) return null;
   return {
     name: String(data.name),
@@ -485,16 +506,13 @@ export async function loadDogProfile(uid: string): Promise<DogProfile | null> {
 }
 
 export async function saveDogProfile(uid: string, profile: Partial<DogProfile>): Promise<void> {
-  const payload: Record<string, unknown> = { updatedAt: firestore.FieldValue.serverTimestamp() };
+  const payload: Record<string, unknown> = { updatedAt: serverTimestamp() };
   for (const [k, v] of Object.entries(profile)) {
     if (v !== undefined && v !== null && (typeof v !== "number" || Number.isFinite(v))) payload[k] = v;
   }
-  await firestore()
-    .collection("users")
-    .doc(uid)
-    .collection("profile")
-    .doc("dog")
-    .set(payload, { merge: true });
+  const db = getFirestore();
+  const profileRef = doc(collection(doc(collection(db, "users"), uid), "profile"), "dog");
+  await setDoc(profileRef, payload, { merge: true });
 }
 
 /** Fallback: save dog profile to device when Firestore is unavailable (e.g. rules, network, DB not enabled). */
