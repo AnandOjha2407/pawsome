@@ -40,6 +40,7 @@ import {
   type UserNotificationPreferences,
 } from "../firebase/firebase";
 import { MOCK_DEVICE_ID } from "../mock/mockData";
+import * as AppLogger from "../utils/AppLogger";
 
 /**
  * Settings screen — 5.5: Dog Profile, Auto-Calm, Notifications, Device Info, Sign Out.
@@ -1037,6 +1038,23 @@ export default function Settings() {
         ) : (
           <Text style={[ui.hint, { color: theme.textMuted }]}>No live data (set Device ID and ensure device is online)</Text>
         )}
+      </View>
+
+      {/* Export app logs — save to Download so you can find when connected to PC */}
+      <View style={ui.section}>
+        <Text style={[ui.sectionTitle, { color: theme.textDark }]}>App logs</Text>
+        <Text style={[ui.hint, { color: theme.textMuted, marginBottom: 8 }]}>
+          Export debug/crash logs. Use &quot;Save to device&quot; or &quot;Files&quot; and choose the Download folder to find the file when the phone is connected to a PC.
+        </Text>
+        <TouchableOpacity
+          style={[ui.primaryBtn, { backgroundColor: theme.primary }]}
+          onPress={async () => {
+            const result = await AppLogger.exportLogsToShare();
+            Alert.alert(result.success ? "Export logs" : "Export failed", result.message);
+          }}
+        >
+          <Text style={[ui.primaryBtnText, { color: theme.textOnPrimary }]}>Export app logs</Text>
+        </TouchableOpacity>
       </View>
 
       {/* 5.5 Sign Out at bottom */}

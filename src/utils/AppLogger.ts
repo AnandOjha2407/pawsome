@@ -1,11 +1,13 @@
 /**
  * Persistent debug and crash logging.
- * Writes to /Download/app_logs.txt (Android) with append; falls back to documentDirectory if needed.
+ * Writes to /Download/app_logs.txt (Android) when allowed; else app private storage.
+ * Use exportLogsToShare() to save a copy to Download via the system share sheet.
  * Format: YYYY-MM-DD HH:mm:ss LEVEL Message
  * Levels: INFO, WARN, ERROR, CRASH
  */
 
 import * as FileSystem from "expo-file-system";
+import * as Sharing from "expo-sharing";
 import { Platform } from "react-native";
 
 export type LogLevel = "INFO" | "WARN" | "ERROR" | "CRASH";
@@ -179,6 +181,41 @@ export function getLogPath(): string {
   return ensurePath();
 }
 
+const EXPORT_FILE_NAME = "app_logs_export.txt";
+
+/**
+ * Export the current log file so you can save it to Download (or anywhere).
+ * Opens the share sheet: choose "Save to device" / "Files" and pick the Download folder
+ * so the file appears when the phone is connected to a PC.
+ */
+export async function exportLogsToShare(): Promise<{ success: boolean; message: string }> {
+  try {
+    const path = ensurePath();
+    if (!path) return { success: false, message: "Log path not available" };
+
+    const exists = await FileSystem.getInfoAsync(path, { size: false }).then((i) => i.exists).catch(() => false);
+    let content = "";
+    if (exists) {
+      content = await FileSystem.readAsStringAsync(path, { encoding: FileSystem.EncodingType.UTF8 }).catch(() => "");
+    }
+    if (!content.trim()) content = "(No log entries yet.)\n";
+
+    const exportPath = `${FileSystem.documentDirectory ?? ""}${EXPORT_FILE_NAME}`;
+    await FileSystem.writeAsStringAsync(exportPath, content, { encoding: FileSystem.EncodingType.UTF8 });
+
+    const canShare = await Sharing.isAvailableAsync();
+    if (!canShare) return { success: false, message: "Sharing is not available on this device" };
+
+    await Sharing.shareAsync(exportPath, {
+      mimeType: "text/plain",
+      dialogTitle: "Save app logs (choose Download to find on PC)",
+    });
+    return { success: true, message: "Use 'Save to device' or 'Files' and pick Download folder to find the file when connected to PC." };
+  } catch (e: any) {
+    return { success: false, message: e?.message ?? String(e) };
+  }
+}
+
 /**
  * Set current screen path for crash reports. Call from root layout when route changes.
  */
@@ -232,4 +269,5 @@ export default {
   getLogPath,
   setCurrentScreen,
   setupGlobalHandlers,
+  exportLogsToShare,
 };
