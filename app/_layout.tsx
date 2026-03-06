@@ -1,18 +1,46 @@
 // Load Firebase app first so DEFAULT app exists before Auth/Database are used
 import "@react-native-firebase/app";
 
-import { Stack } from "expo-router";
+import { Stack, usePathname } from "expo-router";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { ThemeProvider } from "../src/ThemeProvider";
 import { FirebaseProvider } from "../src/context/FirebaseContext";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { Platform, AppState } from "react-native";
 import * as SystemUI from "expo-system-ui";
 import { bleManager } from "../src/ble/BLEManager";
 import { loadPairedDevices } from "../src/storage/pairedDevices";
+import * as AppLogger from "../src/utils/AppLogger";
 
 export default function RootLayout() {
+  const pathname = usePathname();
+  const prevPathRef = useRef<string | null>(null);
+
+  // Crash and debug logging: global handlers + app start/close + current screen for crash reports
+  useEffect(() => {
+    AppLogger.setupGlobalHandlers();
+    AppLogger.info("App started");
+  }, []);
+
+  useEffect(() => {
+    if (pathname != null && pathname !== prevPathRef.current) {
+      prevPathRef.current = pathname;
+      AppLogger.setCurrentScreen(pathname);
+      AppLogger.info(`Screen navigation ${pathname}`);
+    }
+  }, [pathname]);
+
+  // Log app close / background
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (nextAppState) => {
+      if (nextAppState === "background" || nextAppState === "inactive") {
+        AppLogger.info("App closing or backgrounded");
+      }
+    });
+    return () => sub.remove();
+  }, []);
+
   useEffect(() => {
     const hideNavigationBar = async () => {
       if (Platform.OS === "android") {

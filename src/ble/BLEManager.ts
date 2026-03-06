@@ -18,6 +18,7 @@ import {
   savePairedDevice,
   PairedDeviceMap,
 } from "../storage/pairedDevices";
+import * as AppLogger from "../utils/AppLogger";
 
 export type Role = "human" | "dog" | "vest";
 
@@ -214,6 +215,8 @@ class BLEManagerReal extends SimpleEmitter {
   private readonly BOND_SYNC_HR_INTERVAL_MS = 1000; // Send HR every second in Bond Sync mode
   private readonly MAX_SYNC_SAMPLES = 64;
   private readonly MIN_SYNC_SAMPLES = 12;
+  private lastBondLogTime = 0;
+  private readonly BOND_LOG_INTERVAL_MS = 30000; // Log bond score at most every 30s
   // CRITICAL: Track subscriptions per device role to prevent memory leaks
   private subscriptions: any[] = [];
   private deviceSubscriptions: Map<string, any[]> = new Map(); // Map deviceId -> subscriptions array
@@ -221,6 +224,7 @@ class BLEManagerReal extends SimpleEmitter {
   constructor() {
     super();
     this.log("BLEManagerReal initialized");
+    AppLogger.info("BLE manager initialized");
     this.bondInterval = setInterval(
       () => this.runBondingTick(),
       this.SAMPLE_INTERVAL_MS
@@ -285,12 +289,14 @@ class BLEManagerReal extends SimpleEmitter {
     // Safety: Prevent multiple scans
     if (this.scanning) {
       this.log("Scan already in progress, ignoring duplicate startScan call");
+      AppLogger.warn("BLE scan already in progress ignoring duplicate startScan");
       return;
     }
 
     // Safety: Verify manager exists
     if (!this.manager) {
       this.log("ERROR: BLE Manager not initialized, cannot start scan");
+      AppLogger.warn("Unexpected state BLE Manager not initialized cannot start scan");
       return;
     }
 
@@ -307,6 +313,7 @@ class BLEManagerReal extends SimpleEmitter {
 
     try {
       this.scanning = true;
+      AppLogger.info("BLE scan started");
       this.log("Scan started - filtering for Polar H10 and Vest devices");
       this.log("Scanning without filter to find both HR service (0x180D) and Vest service (4fafc201-...)");
 
@@ -316,6 +323,7 @@ class BLEManagerReal extends SimpleEmitter {
       this.manager.startDeviceScan(null, { allowDuplicates: false }, (error, device) => {
         if (error) {
           this.log("Scan error: " + error.message);
+          AppLogger.error("BLE scan error", error);
           return;
         }
         if (!device) return;
@@ -526,6 +534,7 @@ class BLEManagerReal extends SimpleEmitter {
         this.manager.stopDeviceScan();
       }
       this.scanning = false;
+      AppLogger.info("BLE scan stopped");
       this.log("Scan stopped");
     } catch (error: any) {
       this.log(`Error stopping scan: ${error?.message ?? error}`);
@@ -898,6 +907,7 @@ class BLEManagerReal extends SimpleEmitter {
         const disconnectSub = device.onDisconnected((error) => {
           try {
             this.log(`Device disconnected: ${role} - ${error?.message ?? "No error"}`);
+            AppLogger.info(`BLE device disconnected ${role} ${error?.message ?? ""}`);
 
             // CRITICAL: Clean up subscriptions ONLY for this specific device
             const deviceId = device.id;
@@ -996,8 +1006,10 @@ class BLEManagerReal extends SimpleEmitter {
       this.emit("connected", this.connectedDevice);
 
       this.log(`✓ Successfully connected to ${descriptor.name ?? descriptor.id} as ${role}`);
+      AppLogger.info(`BLE device connected to ${descriptor.name ?? descriptor.id} as ${role}`);
     } catch (e: any) {
       this.log("Connect error: " + String(e?.message ?? e));
+      AppLogger.error(`BLE connection failed role=${role} device=${descriptor.name ?? descriptor.id}`, e);
 
       // Reset connection state on error
       this.connectedRoles[role] = false;
@@ -1109,6 +1121,7 @@ class BLEManagerReal extends SimpleEmitter {
                   // Safety: Ensure targetData exists
                   if (!targetData) {
                     this.log(`Warning: targetData is null for ${role}`);
+                    AppLogger.warn(`Unexpected null targetData for ${role}`);
                     return;
                   }
 
@@ -1148,9 +1161,11 @@ class BLEManagerReal extends SimpleEmitter {
                   }
 
                   this.log(`Polar H10 data [${role}]: HR=${parsed.heartRate}, HRV=${realTimeData.hrv ?? 'N/A'}, Contact=${parsed.hasContact}`);
+                  AppLogger.info(`Packet received Polar H10 [${role}] HR=${parsed.heartRate} HRV=${realTimeData.hrv ?? "N/A"}`);
                 }
               } else {
                 this.log(`Failed to parse Polar H10 data from ${role} device`);
+                AppLogger.error(`Packet parse failed Polar H10 [${role}] parseHeartRate returned null`);
                 // Even if parsing fails, emit current data (which will be 0 if no data received)
                 try {
                   this.emitDeviceData(role);
@@ -1160,6 +1175,7 @@ class BLEManagerReal extends SimpleEmitter {
               }
             } catch (parseError: any) {
               this.log(`Parse error [${role}]: ${parseError?.message ?? parseError}`);
+              AppLogger.error(`Packet parse failed Polar H10 [${role}]`, parseError);
               // Don't crash - just log the error
             }
           } catch (callbackError: any) {
@@ -2135,6 +2151,7 @@ class BLEManagerReal extends SimpleEmitter {
         sync = calculateSynchronization(humanSeries, dogSeries);
       } catch (calcError: any) {
         this.log(`Error calculating bond scores: ${calcError?.message ?? calcError}`);
+        AppLogger.error("Bond score calculation error", calcError);
         return;
       }
 
@@ -2145,6 +2162,7 @@ class BLEManagerReal extends SimpleEmitter {
         bond0to10 = calculateBondScore(humanC, dogC, sync, durSec);
       } catch (bondError: any) {
         this.log(`Error calculating bond score: ${bondError?.message ?? bondError}`);
+        AppLogger.error("Bond score calculation error", bondError);
         return;
       }
 
@@ -2152,6 +2170,14 @@ class BLEManagerReal extends SimpleEmitter {
       this.sleepScore = Math.max(0, Math.min(100, Math.round(bond0to10 * 10)));
       this.recoveryScore = Math.max(0, Math.min(100, Math.round(dogC)));
       this.strainScore = Math.max(0, Math.min(100, Math.round(humanC)));
+
+      const now = Date.now();
+      if (now - this.lastBondLogTime >= this.BOND_LOG_INTERVAL_MS) {
+        this.lastBondLogTime = now;
+        AppLogger.info(
+          `Bond score calculated humanC=${Math.round(humanC)} dogC=${Math.round(dogC)} sync=${Math.round(sync)} bond=${this.sleepScore} durationSec=${Math.round(durSec)}`
+        );
+      }
 
       // Emit combined bond scores
       try {

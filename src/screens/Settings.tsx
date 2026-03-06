@@ -720,18 +720,28 @@ export default function Settings() {
             thumbColor={Platform.OS === "android" ? (autoCalmEnabled ? theme.primary : undefined) : undefined}
           />
         </View>
-        {autoCalmEnabled && (
+        {autoCalmEnabled && (() => {
+            const SLIDER_MIN = 0;
+            const SLIDER_MAX = 100;
+            const SLIDER_STEP = 1;
+            const SLIDER_DEFAULT = 60;
+            const raw = autoCalmThreshold;
+            const value = typeof raw === "number" && Number.isFinite(raw) ? Math.max(SLIDER_MIN, Math.min(SLIDER_MAX, raw)) : SLIDER_DEFAULT;
+            const minimumValue = SLIDER_MIN ?? 0;
+            const maximumValue = SLIDER_MAX ?? 100;
+            const step = SLIDER_STEP ?? 1;
+            const canRenderSlider = typeof value === "number" && Number.isFinite(value) && typeof minimumValue === "number" && typeof maximumValue === "number" && typeof step === "number";
+            return (
           <>
             <Text style={[ui.label, { color: theme.textMuted, marginTop: 12 }]}>Anxiety threshold (0–100, default 60)</Text>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 12, marginTop: 8 }}>
-              {/* Guard + defined numeric props to avoid RNCSliderProps SIGSEGV (value/min/max always valid numbers) */}
-              {typeof autoCalmThreshold === "number" && (
+              {canRenderSlider && (
               <Slider
                 style={{ flex: 1, height: 24 }}
-                minimumValue={0}
-                maximumValue={100}
-                step={1}
-                value={Number.isFinite(autoCalmThreshold) ? autoCalmThreshold : 60}
+                minimumValue={minimumValue}
+                maximumValue={maximumValue}
+                step={step}
+                value={value ?? SLIDER_DEFAULT}
                 onValueChange={(v) => setAutoCalmThreshold(Math.round(v))}
                 onSlidingComplete={(v) => {
                   const n = Math.round(v);
@@ -751,7 +761,7 @@ export default function Settings() {
                 thumbTintColor={theme.primary}
               />
               )}
-              <Text style={[ui.valueText, { color: theme.textDark, minWidth: 28 }]}>{autoCalmThreshold ?? 60}</Text>
+              <Text style={[ui.valueText, { color: theme.textDark, minWidth: 28 }]}>{typeof value === "number" ? value : SLIDER_DEFAULT}</Text>
             </View>
             <Text style={[ui.label, { color: theme.textMuted, marginTop: 12 }]}>Default protocol</Text>
             <View style={{ marginTop: 6 }}>
@@ -854,7 +864,8 @@ export default function Settings() {
               </ScrollView>
             </View>
           </>
-        )}
+            );
+          })()}
       </View>
 
       {/* 5.5 Notifications: store in Firestore user preferences */}

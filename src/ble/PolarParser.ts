@@ -4,6 +4,7 @@
 // Uses standard Bluetooth Heart Rate Profile (0x180D)
 
 import { Buffer } from "buffer";
+import * as AppLogger from "../utils/AppLogger";
 
 export interface PolarHRData {
   heartRate: number;      // BPM
@@ -106,6 +107,7 @@ export function parseHeartRate(data: Uint8Array): PolarHRData | null {
     };
   } catch (error) {
     console.warn("Polar parse error:", error);
+    AppLogger.error(`PolarParser parseHeartRate error data length=${data?.length ?? 0}`, error);
     return null;
   }
 }
@@ -155,6 +157,7 @@ export function calculateHRV(rrIntervals: number[]): number | null {
     return Math.round(rmssd);  // HRV in ms
   } catch (error) {
     console.warn("Error calculating HRV:", error);
+    AppLogger.error("PolarParser calculateHRV error", error);
     return null;
   }
 }
