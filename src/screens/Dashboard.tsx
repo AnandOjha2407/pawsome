@@ -1,4 +1,4 @@
-// Dashboard — Pipe 1: READ only from /devices/{deviceId}/live. All fields use ?? for future-proofing.
+// Dashboard — Pipe 1: READ only from /{deviceId}/live (RTDB). All fields use ?? for future-proofing.
 import React, { useState, useEffect, useRef } from "react";
 import {
   View,
@@ -58,28 +58,21 @@ export default function Dashboard() {
   const handleEmergencyStop = async () => {
     setSendingStop(true);
     try {
+      // BLE path first (instant confirmation via beb54841)
+      if (vestConnected) {
+        const ok = await bleManager.sendStopBLE();
+        if (!ok) Alert.alert("Error", "Failed to send stop.");
+      }
+      // Also send via Firebase
       if (deviceId && firebase?.sendStop) {
-        const id = await firebase.sendStop();
-        if (id) {
-          // Loading stays true until device acknowledges (therapyActive clears) or timeout — see useEffect below
-        } else {
-          Alert.alert("Error", "Failed to send stop command.");
-          setSendingStop(false);
-        }
-      } else if (vestConnected && typeof (bleManager as any).sendTherapyCommand === "function") {
-        const { THERAPY } = await import("../ble/BLEManager");
-        const ok = await (bleManager as any).sendTherapyCommand(THERAPY.STOP);
-        if (ok) setSendingStop(false);
-        else {
-          Alert.alert("Error", "Failed to stop.");
-          setSendingStop(false);
-        }
-      } else {
-        Alert.alert("Not Connected", "Set Device ID in Settings for live control (BLE is setup-only).");
-        setSendingStop(false);
+        await firebase.sendStop();
+      }
+      if (!vestConnected && !deviceId) {
+        Alert.alert("Not Connected", "No BLE or cloud connection available.");
       }
     } catch (e: any) {
       Alert.alert("Error", e?.message ?? "Failed to send stop.");
+    } finally {
       setSendingStop(false);
     }
   };
@@ -87,11 +80,24 @@ export default function Dashboard() {
   const state = (live?.state ?? "CALM") as keyof typeof STATE_ICON;
   const iconSource = STATE_ICON[state] ?? STATE_ICON.CALM;
   const glowColor = STATE_GLOW[state] ?? theme.primary + "26";
-  // Handout: device lastUpdated is "seconds since boot". We show time since app last received data.
   const receivedAt = firebase?.liveReceivedAt ?? null;
-  const lastUpdated = receivedAt != null
-    ? `${Math.max(0, Math.round((Date.now() - receivedAt) / 1000))}s ago`
-    : "—";
+  const ageSecs = receivedAt != null ? Math.max(0, Math.round((Date.now() - receivedAt) / 1000)) : null;
+
+  let syncLabel: string;
+  let syncColor: string;
+  if (ageSecs == null) {
+    syncLabel = "No data";
+    syncColor = theme.textMuted;
+  } else if (ageSecs < 60) {
+    syncLabel = "Live";
+    syncColor = "#3FB950";
+  } else if (ageSecs <= 300) {
+    syncLabel = `Updated ${ageSecs}s ago`;
+    syncColor = "#D29922";
+  } else {
+    syncLabel = "Harness offline";
+    syncColor = "#F85149";
+  }
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const isAnxious = state === "ANXIOUS";
   const therapyActive = !!(live?.therapyActive && live.therapyActive !== "NONE" && live.therapyActive !== "");
@@ -171,8 +177,8 @@ export default function Dashboard() {
               <Text style={{ fontSize: 12, color: theme.textMuted }}>🔋 {typeof batteryPercent === "number" ? `${batteryPercent}%` : "--"}</Text>
             </View>
             <View style={[styles.badge, { backgroundColor: theme.card }]}>
-              <Text style={{ fontSize: 12, color: theme.textMuted }}>
-                {connectionType === "wifi" ? "📶 WiFi" : connectionType === "ble" ? "📶 BLE" : "📶 --"}
+              <Text style={{ fontSize: 12, color: syncColor, fontWeight: "700" }}>
+                {syncLabel}
               </Text>
             </View>
             <TouchableOpacity onPress={() => router.push("/settings")} style={{ padding: 8 }}>
@@ -285,10 +291,14 @@ export default function Dashboard() {
           </View>
         )}
 
-        {/* Connection: WiFi | Last update — from device */}
+        {/* Offline sync indicator */}
         <View style={styles.footer}>
-          <Text style={[styles.footerText, { color: theme.textMuted }]}>
-            Connection: {live ? (connectionType === "wifi" ? "WiFi" : connectionType.toUpperCase()) : "—"} | Last update: {lastUpdated}
+          <View style={[styles.syncDot, { backgroundColor: syncColor }]} />
+          <Text style={[styles.footerText, { color: syncColor, fontWeight: "700" }]}>
+            {syncLabel}
+          </Text>
+          <Text style={[styles.footerText, { color: theme.textMuted, marginLeft: 10 }]}>
+            {live ? (connectionType === "wifi" ? "WiFi" : connectionType.toUpperCase()) : ""}
           </Text>
         </View>
 
@@ -393,8 +403,9 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   stopBtnText: { fontSize: 16, fontWeight: "800" },
-  footer: { marginTop: 20, alignItems: "center" },
-  footerText: { fontSize: 12 },
+  footer: { marginTop: 20, flexDirection: "row", alignItems: "center", justifyContent: "center" },
+  footerText: { fontSize: 13 },
+  syncDot: { width: 8, height: 8, borderRadius: 4, marginRight: 6 },
   subtitle: { fontSize: 14 },
   pairBtn: {
     flexDirection: "row",

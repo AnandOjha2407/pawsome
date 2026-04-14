@@ -1,10 +1,10 @@
 /**
  * Firebase service for PawsomeBond v1 — Pipeline Architecture
  *
- * Realtime Database (RTDB) paths:
- *   - READ  /devices/{deviceId}/live              — live harness state (subscribeLiveState)
- *   - WRITE /devices/{deviceId}/commands/latest  — calm, stop, config (sendCalmCommand, sendStopCommand, sendConfigCommand)
- *   - WRITE /userDevices/{uid}                   — sync deviceId per user (syncDeviceIdToBackend)
+ * Realtime Database (RTDB) paths (device nodes at root, e.g. PB-001):
+ *   - READ  /{deviceId}/live                     — live harness state (subscribeLiveState)
+ *   - WRITE /{deviceId}/commands/latest         — agreed firmware envelope (see COMMAND_TYPES_WHITELIST + buildCommandPayload)
+ *   - WRITE /userDevices/{uid}                  — deviceId string per user (syncDeviceIdToBackend)
  *
  * Firestore paths:
  *   - devices/{deviceId}/history     — history records (loadHistory)
@@ -12,7 +12,7 @@
  *   - devices/{deviceId}/config/autoCalm — auto-calm settings (loadDeviceConfig, writeDeviceConfig)
  *   - users/{uid}                    — user prefs, deviceId, FCM, profile (saveUserPreferences, loadDogProfile, etc.)
  *
- * Pipe 3: Command feedback via therapyActive in /devices/{deviceId}/live (no separate subscription).
+ * Pipe 3: Command feedback via therapyActive in /{deviceId}/live (no separate subscription).
  *
  * Uses modular Firestore API (getFirestore, collection, doc, setDoc, getDoc, getDocs, query, where, orderBy, limit, startAfter, serverTimestamp) to avoid deprecated namespaced API.
  */
@@ -40,7 +40,8 @@ import { MOCK_DEVICE_ID, getMockHistory, getMockAlerts } from "../mock/mockData"
 import { DOG_PROFILE_LOCAL_KEY } from "../storage/constants";
 
 const COLLECTIONS = { devices: "devices", users: "users", commands: "commands", history: "history", alerts: "alerts", config: "config", profile: "profile" } as const;
-const RTDB_PATHS = { devices: "devices", userDevices: "userDevices", commandsLatest: "commands/latest" } as const;
+/** RTDB: device nodes are at root (e.g. PB-001/live), not under "devices/". */
+const RTDB_PATHS = { userDevices: "userDevices", commandsLatest: "commands/latest" } as const;
 
 const CALM_THROTTLE_MS = 5000;
 const STOP_THROTTLE_MS = 2000;
@@ -49,6 +50,24 @@ const RETRY_DELAY_MS = 800;
 
 let lastCalmAt = 0;
 let lastStopAt = 0;
+
+/**
+ * RTDB command `type` values accepted by app + firmware (firmware must whitelist the same set).
+ * CONFIG carries auto-calm settings from Settings; confirm with hardware if firmware uses a different name.
+ */
+export const COMMAND_TYPES_WHITELIST = ["CALM", "STOP", "STATUS", "CONFIG"] as const;
+export type CommandType = (typeof COMMAND_TYPES_WHITELIST)[number];
+
+function unixSeconds(): number {
+  return Math.floor(Date.now() / 1000);
+}
+
+/** Required on every command: fresh timestamp (replay window) + owner UID. */
+function getCommandEnvelope(): { timestamp: number; sentBy: string } {
+  const u = auth().currentUser;
+  if (!u) throw new Error("Sign in to control your harness.");
+  return { timestamp: unixSeconds(), sentBy: u.uid };
+}
 
 function validateDeviceId(deviceId: string): void {
   const trimmed = deviceId?.trim?.();
@@ -60,6 +79,25 @@ function validateCommandInputs(protocol: number, intensity: number, duration: nu
   if (!Number.isFinite(protocol) || protocol < 1 || protocol > 8) throw new Error("Protocol must be 1–8");
   if (!Number.isFinite(intensity) || intensity < 1 || intensity > 5) throw new Error("Intensity must be 1–5");
   if (!Number.isFinite(duration) || duration < 1 || duration > 7200) throw new Error("Duration must be 1–7200 seconds");
+}
+
+/** Ensures signed-in user and that this device is linked to their account (Firestore + RTDB). */
+export async function assertRegisteredUserOwnsDevice(deviceId: string): Promise<void> {
+  const user = auth().currentUser;
+  if (!user) throw new Error("Sign in to control your harness.");
+  const trimmed = deviceId.trim();
+  const uid = user.uid;
+  const db = getFirestore();
+  const userRef = doc(collection(db, COLLECTIONS.users), uid);
+  const userSnap = await getDoc(userRef);
+  const data = userSnap.data() as { deviceId?: unknown } | undefined;
+  const ud = data?.deviceId;
+  const fromFs = typeof ud === "string" ? ud.trim() : "";
+  if (fromFs === trimmed) return;
+  const rtdbSnap = await database().ref(`${RTDB_PATHS.userDevices}/${uid}`).once("value");
+  const rtdbVal = rtdbSnap.val();
+  if (typeof rtdbVal === "string" && rtdbVal.trim() === trimmed) return;
+  throw new Error("This harness is not linked to your account. Open Settings and save your Device ID.");
 }
 
 async function withRetry<T>(fn: () => Promise<T>, retries = MAX_RETRIES): Promise<T> {
@@ -132,20 +170,41 @@ export function normalizeLiveState(raw: Record<string, unknown> | null): LiveSta
   };
 }
 
-export type CalmCommand = {
-  cmd: "calm";
+/** Shape written to RTDB commands/latest — matches firmware contract + CALM motor fields. */
+export type RtdbCalmPayload = {
+  type: "CALM";
+  timestamp: number;
+  sentBy: string;
   protocol: number;
   intensity: number;
   duration: number;
-  status: "pending" | "sent" | "delivered";
-  createdAt: any;
-  userId?: string;
 };
 
-export type StopCommand = {
-  cmd: "stop";
-  createdAt: any;
+export type RtdbStopPayload = {
+  type: "STOP";
+  timestamp: number;
+  sentBy: string;
 };
+
+export type RtdbStatusPayload = {
+  type: "STATUS";
+  timestamp: number;
+  sentBy: string;
+};
+
+export type RtdbConfigPayload = {
+  type: "CONFIG";
+  timestamp: number;
+  sentBy: string;
+  autoCalmEnabled: boolean;
+  autoCalmThreshold: number;
+  defaultProtocol: number;
+  defaultIntensity: number;
+};
+
+/** @deprecated Legacy names — prefer Rtdb*Payload */
+export type CalmCommand = RtdbCalmPayload;
+export type StopCommand = RtdbStopPayload;
 
 /**
  * History and alerts are stored in Firestore and unique per user:
@@ -184,13 +243,18 @@ export const PROTOCOLS = [
   { id: 8, name: "Sleep Inducer", desc: "Ultra-slow breathing for sleep" },
 ];
 
-/** Pipe 1: READ only. Path: /devices/{deviceId}/live. Call onData with normalized live state (and optionally raw for debug). */
+/** Pipe 1: READ only. Path: /{deviceId}/live. Call onData with normalized live state (and optionally raw for debug). */
 export function subscribeLiveState(
   deviceId: string,
   onData: (data: LiveState | null, raw?: Record<string, unknown> | null) => void
 ): () => void {
   validateDeviceId(deviceId);
-  const path = `${RTDB_PATHS.devices}/${deviceId}/live`;
+  if (!auth().currentUser) {
+    onData(null, null);
+    return () => {};
+  }
+  const id = deviceId.trim();
+  const path = `${id}/live`;
   const ref = database().ref(path);
   const callback = (snapshot: any) => {
     try {
@@ -216,7 +280,7 @@ export function subscribeLiveState(
   };
 }
 
-/** Pipe 2: WRITE /devices/{deviceId}/commands/latest. ESP32 polls, executes, deletes. Returns "ok". */
+/** Pipe 2: WRITE /{deviceId}/commands/latest. ESP32 polls, executes, deletes. Returns "ok". */
 export async function sendCalmCommand(
   deviceId: string,
   protocol: number,
@@ -225,14 +289,40 @@ export async function sendCalmCommand(
 ): Promise<string> {
   validateDeviceId(deviceId);
   validateCommandInputs(protocol, intensity, duration);
+  await assertRegisteredUserOwnsDevice(deviceId);
+  const id = deviceId.trim();
   const now = Date.now();
   if (now - lastCalmAt < CALM_THROTTLE_MS) throw new Error("Please wait a few seconds before sending another calm command");
   lastCalmAt = now;
   return withRetry(async () => {
-    const ref = database().ref(`${RTDB_PATHS.devices}/${deviceId}/${RTDB_PATHS.commandsLatest}`);
-    await ref.set({ cmd: "calm", protocol, intensity, duration });
+    const ref = database().ref(`${id}/${RTDB_PATHS.commandsLatest}`);
+    const env = getCommandEnvelope();
+    const payload: RtdbCalmPayload = {
+      type: "CALM",
+      ...env,
+      protocol,
+      intensity,
+      duration,
+    };
+    await ref.set(payload);
     return "ok";
   });
+}
+
+/** BLE data bridge: write telemetry JSON from BLE (beb54842) to RTDB /{deviceId}/live. */
+export async function writeLiveTelemetry(
+  deviceId: string,
+  telemetry: Record<string, unknown>
+): Promise<void> {
+  if (!deviceId || !telemetry) return;
+  const id = deviceId.trim();
+  if (!id) return;
+  try {
+    const ref = database().ref(`${id}/live`);
+    await ref.update(telemetry);
+  } catch (e) {
+    if (__DEV__) console.warn("[writeLiveTelemetry] error:", e);
+  }
 }
 
 /** Pipe 3: Command feedback is via therapyActive in live state (no separate subscription). Kept for compat; no-op. */
@@ -247,17 +337,35 @@ export function subscribeCommandStatus(
 /** Pipe 2: WRITE stop to commands/latest. */
 export async function sendStopCommand(deviceId: string): Promise<string> {
   validateDeviceId(deviceId);
+  await assertRegisteredUserOwnsDevice(deviceId);
+  const id = deviceId.trim();
   const now = Date.now();
   if (now - lastStopAt < STOP_THROTTLE_MS) throw new Error("Please wait a moment before sending stop again");
   lastStopAt = now;
   return withRetry(async () => {
-    const ref = database().ref(`${RTDB_PATHS.devices}/${deviceId}/${RTDB_PATHS.commandsLatest}`);
-    await ref.set({ cmd: "stop" });
+    const ref = database().ref(`${id}/${RTDB_PATHS.commandsLatest}`);
+    const env = getCommandEnvelope();
+    const payload: RtdbStopPayload = { type: "STOP", ...env };
+    await ref.set(payload);
     return "ok";
   });
 }
 
-/** Config command per 5.5: write to /devices/{device_id}/commands so device applies auto-calm settings */
+/** Optional: request harness status (firmware must accept type STATUS). */
+export async function sendStatusCommand(deviceId: string): Promise<string> {
+  validateDeviceId(deviceId);
+  await assertRegisteredUserOwnsDevice(deviceId);
+  const id = deviceId.trim();
+  return withRetry(async () => {
+    const ref = database().ref(`${id}/${RTDB_PATHS.commandsLatest}`);
+    const env = getCommandEnvelope();
+    const payload: RtdbStatusPayload = { type: "STATUS", ...env };
+    await ref.set(payload);
+    return "ok";
+  });
+}
+
+/** Config command per 5.5: write to /{deviceId}/commands/latest so device applies auto-calm settings */
 export type ConfigCommandPayload = {
   autoCalmEnabled: boolean;
   autoCalmThreshold: number; // 0-100
@@ -279,15 +387,20 @@ export async function sendConfigCommand(
 ): Promise<string> {
   validateDeviceId(deviceId);
   validateConfigPayload(payload);
+  await assertRegisteredUserOwnsDevice(deviceId);
+  const id = deviceId.trim();
   return withRetry(async () => {
-    const ref = database().ref(`${RTDB_PATHS.devices}/${deviceId}/${RTDB_PATHS.commandsLatest}`);
-    await ref.set({
-      cmd: "config",
+    const ref = database().ref(`${id}/${RTDB_PATHS.commandsLatest}`);
+    const env = getCommandEnvelope();
+    const body: RtdbConfigPayload = {
+      type: "CONFIG",
+      ...env,
       autoCalmEnabled: payload.autoCalmEnabled,
       autoCalmThreshold: payload.autoCalmThreshold,
       defaultProtocol: payload.defaultProtocol,
       defaultIntensity: payload.defaultIntensity,
-    });
+    };
+    await ref.set(body);
     return "ok";
   });
 }
@@ -396,6 +509,7 @@ export async function writeDeviceConfig(
   deviceId: string,
   config: Partial<AutoCalmConfig>
 ): Promise<void> {
+  await assertRegisteredUserOwnsDevice(deviceId);
   const db = getFirestore();
   const configRef = doc(collection(doc(collection(db, "devices"), deviceId), "config"), "autoCalm");
   await setDoc(configRef, { ...config, updatedAt: serverTimestamp() }, { merge: true });

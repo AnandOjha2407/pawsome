@@ -1,6 +1,12 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function userOwnsDeviceId(deviceId) {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.deviceId == deviceId;
+    }
+
     // Users: only the signed-in user can read/write their own doc and subcollections (e.g. profile/dog)
     match /users/{userId} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
@@ -8,11 +14,11 @@ service cloud.firestore {
         allow read, write: if request.auth != null && request.auth.uid == userId;
       }
     }
-    // Devices: app reads/writes by deviceId (e.g. PB-001). Optional: restrict to user's deviceId via users doc.
+    // Devices: only the user whose users/{uid}.deviceId matches this deviceId
     match /devices/{deviceId} {
-      allow read, write: if request.auth != null;
+      allow read, write: if userOwnsDeviceId(deviceId);
       match /{subcollection}/{doc} {
-        allow read, write: if request.auth != null;
+        allow read, write: if userOwnsDeviceId(deviceId);
       }
     }
   }

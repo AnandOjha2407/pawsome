@@ -1,7 +1,9 @@
 /**
  * Persistent debug and crash logging.
- * Writes to /Download/app_logs.txt (Android) when allowed; else app private storage.
- * Use exportLogsToShare() to save a copy to Download via the system share sheet.
+ * Android: tries to save where you see it in file manager:
+ *   Internal storage -> Android -> dataSP67 (or data) -> com.pawsomebond.app -> files -> logs -> app_logs.txt
+ * iOS: .../Documents/logs/app_logs.txt
+ * Use exportLogsToShare() to save a copy (e.g. to Download) via the share sheet.
  * Format: YYYY-MM-DD HH:mm:ss LEVEL Message
  * Levels: INFO, WARN, ERROR, CRASH
  */
@@ -13,39 +15,81 @@ import { Platform } from "react-native";
 export type LogLevel = "INFO" | "WARN" | "ERROR" | "CRASH";
 
 const LOG_FILE_NAME = "app_logs.txt";
+const LOGS_DIR_NAME = "logs";
+const ANDROID_PACKAGE = "com.pawsomebond.app";
 
-/**
- * Log file path. Android: /storage/emulated/0/Download/app_logs.txt for PC/ZArchiver access.
- */
-function getLogFilePath(): string {
-  if (Platform.OS === "android") {
-    const downloadDir = "/storage/emulated/0/Download";
-    return `${downloadDir}/${LOG_FILE_NAME}`;
-  }
+/** Base path for external app files (visible in file manager). Some devices use dataSP67 instead of data. */
+const ANDROID_EXTERNAL_BASES = [
+  `/storage/emulated/0/Android/dataSP67/${ANDROID_PACKAGE}/files`,
+  `/storage/emulated/0/Android/data/${ANDROID_PACKAGE}/files`,
+];
+
+function getLogDirPath(): string {
   const base = FileSystem.documentDirectory ?? "";
   if (!base) return "";
   const normalized = base.endsWith("/") ? base : base + "/";
-  return normalized + LOG_FILE_NAME;
+  return normalized + LOGS_DIR_NAME;
+}
+
+function getLogFilePath(): string {
+  const dir = getLogDirPath();
+  if (!dir) return "";
+  return `${dir}/${LOG_FILE_NAME}`;
+}
+
+/** Android: path under external app dir (Internal storage -> Android -> dataSP67 or data -> com.pawsomebond.app -> files -> logs). */
+function getAndroidExternalLogPath(baseDir: string): string {
+  return `${baseDir}/${LOGS_DIR_NAME}/${LOG_FILE_NAME}`;
 }
 
 let logFilePath: string = "";
-let useFallbackPath = false;
+let logDirEnsured = false;
+/** Which Android base we're using (external dataSP67/data path or null = documentDirectory). */
+let androidExternalBase: string | null = null;
 let writeQueue: Promise<void> = Promise.resolve();
 let initialized = false;
 
 /** Current screen path for crash reports (set from root layout). */
 let currentScreen: string = "";
 
-function getFallbackPath(): string {
-  const base = FileSystem.documentDirectory ?? "";
-  if (!base) return "";
-  const normalized = base.endsWith("/") ? base : base + "/";
-  return normalized + LOG_FILE_NAME;
+async function ensureLogDir(): Promise<void> {
+  if (logDirEnsured) return;
+  if (Platform.OS === "android" && androidExternalBase === null) {
+    for (const base of ANDROID_EXTERNAL_BASES) {
+      const dir = `${base}/${LOGS_DIR_NAME}`;
+      try {
+        const info = await FileSystem.getInfoAsync(dir, { size: false }).catch(() => null);
+        if (!info?.exists) {
+          await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
+        }
+        androidExternalBase = base;
+        logDirEnsured = true;
+        logFilePath = getAndroidExternalLogPath(base);
+        return;
+      } catch (_e) {
+        continue;
+      }
+    }
+  }
+  const dir = getLogDirPath();
+  if (!dir) return;
+  try {
+    const info = await FileSystem.getInfoAsync(dir, { size: false }).catch(() => null);
+    if (!info?.exists) {
+      await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
+    }
+    logDirEnsured = true;
+    if (!logFilePath) logFilePath = getLogFilePath();
+  } catch (_e) {
+    if (__DEV__) console.warn("[AppLogger] Could not create logs directory");
+  }
 }
 
 function ensurePath(): string {
+  if (Platform.OS === "android" && androidExternalBase != null) {
+    return logFilePath || getAndroidExternalLogPath(androidExternalBase);
+  }
   if (!logFilePath) logFilePath = getLogFilePath();
-  if (useFallbackPath) return getFallbackPath();
   return logFilePath;
 }
 
@@ -81,7 +125,9 @@ async function appendToFile(line: string): Promise<void> {
   if (!path) return;
 
   const doWrite = async () => {
-    let pathToUse = useFallbackPath ? getFallbackPath() : path;
+    await ensureLogDir();
+    const pathToUse = ensurePath();
+    if (!pathToUse) return;
     try {
       const info = await FileSystem.getInfoAsync(pathToUse, { size: true }).catch(() => null);
       const exists = info?.exists ?? false;
@@ -108,27 +154,8 @@ async function appendToFile(line: string): Promise<void> {
       await FileSystem.writeAsStringAsync(pathToUse, content, {
         encoding: FileSystem.EncodingType.UTF8,
       });
-    } catch (e) {
-      if (!useFallbackPath) {
-        useFallbackPath = true;
-        pathToUse = getFallbackPath();
-        try {
-          const info = await FileSystem.getInfoAsync(pathToUse, { size: true }).catch(() => null);
-          const exists = info?.exists ?? false;
-          let content = line;
-          if (exists && info?.size != null) {
-            const existing = await FileSystem.readAsStringAsync(pathToUse, {
-              encoding: FileSystem.EncodingType.UTF8,
-            }).catch(() => "");
-            content = existing + line;
-          }
-          await FileSystem.writeAsStringAsync(pathToUse, content, {
-            encoding: FileSystem.EncodingType.UTF8,
-          });
-        } catch (_e2) {
-          if (__DEV__) console.warn("[AppLogger] Failed to write log file");
-        }
-      }
+    } catch (_e) {
+      if (__DEV__) console.warn("[AppLogger] Failed to write log file");
     }
   };
 
@@ -181,6 +208,14 @@ export function getLogPath(): string {
   return ensurePath();
 }
 
+/** Directory containing app_logs.txt. On Android external: .../files/logs (under dataSP67 or data). */
+export function getLogDirectory(): string {
+  if (Platform.OS === "android" && androidExternalBase != null) {
+    return `${androidExternalBase}/${LOGS_DIR_NAME}`;
+  }
+  return getLogDirPath();
+}
+
 const EXPORT_FILE_NAME = "app_logs_export.txt";
 
 /**
@@ -190,6 +225,7 @@ const EXPORT_FILE_NAME = "app_logs_export.txt";
  */
 export async function exportLogsToShare(): Promise<{ success: boolean; message: string }> {
   try {
+    await ensureLogDir();
     const path = ensurePath();
     if (!path) return { success: false, message: "Log path not available" };
 
@@ -267,6 +303,7 @@ export default {
   error,
   crash,
   getLogPath,
+  getLogDirectory,
   setCurrentScreen,
   setupGlobalHandlers,
   exportLogsToShare,

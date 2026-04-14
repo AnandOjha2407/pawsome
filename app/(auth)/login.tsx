@@ -1,15 +1,17 @@
 import Login from "../../src/screens/Login";
 import { useRouter } from "expo-router";
-import { useEffect } from "react";
-import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
+import { useEffect, useState } from "react";
+import { Alert } from "react-native";
 import { useFirebase } from "../../src/context/FirebaseContext";
-import { useTheme } from "../../src/ThemeProvider";
 import auth from "@react-native-firebase/auth";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+
+const GUEST_MODE_KEY = "@pawsomebond_guest_mode";
 
 export default function AuthLoginScreen() {
   const router = useRouter();
   const firebase = useFirebase();
-  const { theme } = useTheme();
+  const [guestLoading, setGuestLoading] = useState(false);
 
   useEffect(() => {
     if (firebase?.user) {
@@ -17,39 +19,28 @@ export default function AuthLoginScreen() {
     }
   }, [firebase?.user]);
 
-  const handleSkip = async () => {
+  const handleGuestMode = async () => {
+    setGuestLoading(true);
     try {
+      await AsyncStorage.setItem(GUEST_MODE_KEY, "true");
       await auth().signInAnonymously();
     } catch (e: any) {
-      console.warn("Skip login failed", e?.message);
+      await AsyncStorage.removeItem(GUEST_MODE_KEY);
+      const msg = e?.message ?? "Unknown error";
+      Alert.alert(
+        "Guest Login Failed",
+        `Could not sign in as guest.\n\n${msg}\n\nMake sure Anonymous sign-in is enabled in Firebase Console → Authentication → Sign-in method.`
+      );
+    } finally {
+      setGuestLoading(false);
     }
   };
 
   return (
-    <View style={{ flex: 1 }}>
-      <Login
-        onSignUp={() => router.push("/signup" as any)}
-      />
-      <TouchableOpacity
-        onPress={handleSkip}
-        style={[styles.skipBtn, { borderColor: theme.border }]}
-      >
-        <Text style={[styles.skipText, { color: theme.textMuted }]}>Skip login (for testing)</Text>
-      </TouchableOpacity>
-    </View>
+    <Login
+      onSignUp={() => router.push("/signup" as any)}
+      onGuestMode={handleGuestMode}
+      guestLoading={guestLoading}
+    />
   );
 }
-
-const styles = StyleSheet.create({
-  skipBtn: {
-    position: "absolute",
-    bottom: 32,
-    left: 24,
-    right: 24,
-    padding: 14,
-    borderRadius: 12,
-    borderWidth: 1,
-    alignItems: "center",
-  },
-  skipText: { fontSize: 14, fontWeight: "600" },
-});

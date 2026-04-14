@@ -52,14 +52,12 @@ const BATTERY_LEVEL_UUID = "00002a19-0000-1000-8000-00805f9b34fb";
 // Devices are now detected by name pattern only - works with ANY Polar H10 or PossumBond-Vest
 // User will assign role (Human/Dog/Vest) when connecting
 
-// ============== PAWSOMEBOND VEST UUIDs ==============
-// Based on NEW_REQUIREMENTS.md - PawsomeBond App Specification
+// ============== PAWSOMEBOND HARNESS UUIDs — FIXED, NEVER CHANGE ==============
 const VEST_SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
-const VEST_COMMAND_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";  // WRITE - therapy mode
-const VEST_INTENSITY_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a9";  // WRITE - 0-255
-const VEST_HEARTBEAT_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26aa";  // WRITE - owner BPM
-const VEST_STATUS_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26ab";     // READ/NOTIFY
-const VEST_WIFI_PROVISION_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26ac"; // WRITE - WiFi SSID+password (setup only)
+const VEST_CMD_RX_UUID = "beb54840-36e1-4688-b7f5-ea07361b26a8";       // WRITE - app writes "CALM:1:3:60" or "STOP" (UTF-8)
+const VEST_STATUS_TX_UUID = "beb54841-36e1-4688-b7f5-ea07361b26a8";    // NOTIFY - ESP32 confirms: THERAPY:HEARTBEAT, STOPPED, COOLDOWN:180, CONNECTED
+const VEST_TELEMETRY_TX_UUID = "beb54842-36e1-4688-b7f5-ea07361b26a8"; // NOTIFY - ESP32 sends JSON telemetry every 3s
+const VEST_WIFI_PROVISION_UUID = "beb54843-36e1-4688-b7f5-ea07361b26a8"; // WRITE - app sends {ssid, password} once during setup
 
 // ============== THERAPY COMMAND CODES ==============
 // Based on NEW_REQUIREMENTS.md - Therapy Command Codes
@@ -83,21 +81,22 @@ export const THERAPY = {
 // Legacy VEST_CMD for backward compatibility
 const VEST_CMD = THERAPY;
 
-// Device name patterns - updated per NEW_REQUIREMENTS.md
+// Device name patterns
 // Polar H10: name includes "Polar H10" (case-insensitive)
-// PAWSOMEBOND-VEST: exact name match "PAWSOMEBOND-VEST"
+// Harness advertises as PAWSOMEBOND-PB-001 (or similar PAWSOMEBOND-* pattern)
 const DEVICE_NAME_PATTERNS = {
   human: [
-    /polar\s*h10/i,      // "Polar H10", "POLAR H10", etc.
-    /polar\s*h\s*10/i,   // "Polar H 10" (with space)
+    /polar\s*h10/i,
+    /polar\s*h\s*10/i,
   ],
   dog: [
-    /polar\s*h10/i,      // "Polar H10" (same as human - user selects role)
-    /polar\s*h\s*10/i,   // "Polar H 10" (with space)
+    /polar\s*h10/i,
+    /polar\s*h\s*10/i,
   ],
   vest: [
-    /^pawsomebond-vest$/i,  // Exact match "PAWSOMEBOND-VEST" (case-insensitive)
-    /pawsomebond-vest/i,    // Fallback: contains "pawsomebond-vest"
+    /^pawsomebond-pb-\d+$/i,  // "PAWSOMEBOND-PB-001" etc.
+    /^pawsomebond-/i,          // Any "PAWSOMEBOND-*" variant
+    /pawsomebond/i,            // Fallback: contains "pawsomebond"
   ],
 };
 
@@ -332,7 +331,7 @@ class BLEManagerReal extends SimpleEmitter {
           const { id, name, rssi } = device;
 
           // Get device service UUIDs (if available from scan response)
-          // On Android, serviceUUIDs is often empty in scan; vest is then matched by name only (e.g. "PAWSOMEBOND-VEST").
+          // On Android, serviceUUIDs is often empty in scan; harness is then matched by name only (e.g. "PAWSOMEBOND-PB-001").
           const serviceUUIDs = device.serviceUUIDs || [];
           const serviceUUIDsLower = serviceUUIDs.map((uuid: string) => uuid.toLowerCase());
 
@@ -357,18 +356,14 @@ class BLEManagerReal extends SimpleEmitter {
 
           // Match by name pattern per NEW_REQUIREMENTS.md
           // Polar H10: name includes "Polar H10" (case-insensitive)
-          // PAWSOMEBOND-VEST: flexible matching for name variations
+          // PAWSOMEBOND-PB-*: harness name matching
           const nameLower = (name?.toLowerCase() || "").trim();
           const isPolarH10ByName = nameLower.includes("polar h10") ||
             nameLower.includes("polar h 10");
           
-          // CRITICAL: More flexible vest name matching to catch variations
-          // Check for exact match, partial match, and common variations
-          const isVestByName = nameLower === "pawsomebond-vest" ||
-            nameLower === "pawsomebond vest" ||
-            nameLower.startsWith("pawsomebond") ||
-            (nameLower.includes("pawsomebond") && nameLower.includes("vest")) ||
-            nameLower.includes("pawsomebond-vest");
+          const isVestByName = nameLower.startsWith("pawsomebond-") ||
+            nameLower.startsWith("pawsomebond ") ||
+            nameLower === "pawsomebond";
 
           // Combine service UUID and name matching
           const isPolarH10 = isPolarH10ByName || isPolarByService;
@@ -385,14 +380,13 @@ class BLEManagerReal extends SimpleEmitter {
             ? (isVestByName ? "by name" : "by service UUID")
             : (isPolarH10ByName ? "by name" : "by service UUID");
           const label = isVest
-            ? "PAWSOMEBOND-VEST (Therapy Vest)"
+            ? "PawsomeBond Harness"
             : "Polar H10 (select role)";
 
           this.log(`Found ${label} [${detectionMethod}]: ${name || 'Unknown'} (${id})`);
           
-          // If vest detected by service UUID but name doesn't match, use a default name
           const displayName = isVest && !isVestByName && !name 
-            ? "PAWSOMEBOND-VEST" 
+            ? "PAWSOMEBOND-PB-001" 
             : (name ?? null);
 
           onDeviceFound({
@@ -809,96 +803,47 @@ class BLEManagerReal extends SimpleEmitter {
           // Connection still succeeds, just data won't stream
         }
       } else if (role === "vest") {
-        // CRITICAL FIX: Vest is output-only device - DO NOT subscribe to notifications
-        // Only write commands, never monitor characteristics
-        this.log(`Vest connected (output-only, no subscriptions needed)`);
+        this.log(`Harness connected — subscribing to STATUS + TELEMETRY`);
 
-        // CRITICAL: Vest connection should NOT fail if status subscription fails
-        // The vest is primarily an output device - we send commands to it
-        // Status subscription is optional and should never crash the connection
-
-        // Verify vest service exists before attempting subscription (optional)
-        // Vest works fine without status subscription - it's output-only
         try {
           const isConnected = await device.isConnected();
-          if (!isConnected) {
-            this.log("Vest not connected, skipping status subscription");
-            // Connection still succeeds - vest can send commands
-          } else {
-            // Verify service exists (non-blocking with timeout to prevent hanging)
+          if (isConnected) {
+            // Subscribe to beb54841 STATUS for therapy confirmation
             try {
-              // Add timeout to prevent hanging on service discovery
-              const servicePromise = device.services();
-              const timeoutPromise = new Promise((_, reject) =>
-                setTimeout(() => reject(new Error("Service discovery timeout")), 5000)
-              );
-
-              const services = await Promise.race([servicePromise, timeoutPromise]) as any[];
-              const vestService = services?.find(s => s.uuid.toLowerCase() === VEST_SERVICE_UUID.toLowerCase());
-
-              if (vestService) {
-                // Service exists - optionally subscribe to status (non-critical)
-                // Wrap in try-catch to prevent any crash
-                try {
-                  await Promise.race([
-                    this.subscribeVestStatus(device),
-                    new Promise((_, reject) =>
-                      setTimeout(() => reject(new Error("Status subscription timeout")), 3000)
-                    )
-                  ]).catch((statusError: any) => {
-                    // Silently fail - vest works without status subscription
-                    this.log(`Info: Vest status subscription not available (this is OK): ${statusError?.message ?? statusError}`);
-                  });
-                } catch (statusError: any) {
-                  // Double-catch to be extra safe
-                  this.log(`Info: Vest status subscription skipped (this is OK): ${statusError?.message ?? statusError}`);
-                  // Non-critical - vest works without status subscription
-                }
-              } else {
-                this.log(`Info: Vest service not found in scan. Available services: ${services?.map(s => s.uuid).join(', ') || 'none'}`);
-                this.log("Vest will work for sending commands, but status monitoring unavailable");
-                // Connection still succeeds - vest can send commands
-              }
-            } catch (serviceError: any) {
-              // Service discovery failed - this is OK, vest can still receive commands
-              this.log(`Info: Could not read vest services (this is OK): ${serviceError?.message ?? serviceError}`);
-              // Non-critical - connection still succeeds, vest can send commands
+              await Promise.race([
+                this.subscribeVestStatus(device),
+                new Promise((_, reject) => setTimeout(() => reject(new Error("Status sub timeout")), 5000)),
+              ]);
+            } catch (statusError: any) {
+              this.log(`Warning: STATUS subscription failed (commands still work): ${statusError?.message ?? statusError}`);
             }
 
-            // Try to read initial battery level from standard Battery Service (0x180F)
-            // ESP32 devices can expose this service for battery monitoring
-            this.readBatteryLevel(device, "vest").catch((batteryError: any) => {
-              this.log(`Info: Could not read initial vest battery (non-critical): ${batteryError?.message ?? batteryError}`);
-              // Non-critical - vest works without battery level
-            });
+            // Subscribe to beb54842 TELEMETRY for live data bridge
+            try {
+              await Promise.race([
+                this.subscribeTelemetry(device),
+                new Promise((_, reject) => setTimeout(() => reject(new Error("Telemetry sub timeout")), 5000)),
+              ]);
+            } catch (telemetryError: any) {
+              this.log(`Warning: TELEMETRY subscription failed: ${telemetryError?.message ?? telemetryError}`);
+            }
 
-            // Start periodic battery reads if not already started
+            this.readBatteryLevel(device, "vest").catch(() => {});
+
             if (!this.batteryReadInterval) {
               this.batteryReadInterval = setInterval(() => {
-                try {
-                  // Read battery for all connected devices (including vest)
-                  Object.entries(this.devices).forEach(async ([deviceRole, dev]) => {
-                    try {
-                      if (dev && (deviceRole === "human" || deviceRole === "dog" || deviceRole === "vest")) {
-                        await this.readBatteryLevel(dev, deviceRole as "human" | "dog" | "vest");
-                      }
-                    } catch (batteryReadError: any) {
-                      this.log(`Error reading battery for ${deviceRole}: ${batteryReadError?.message ?? batteryReadError}`);
-                      // Don't crash - just log
+                Object.entries(this.devices).forEach(async ([deviceRole, dev]) => {
+                  try {
+                    if (dev && (deviceRole === "human" || deviceRole === "dog" || deviceRole === "vest")) {
+                      await this.readBatteryLevel(dev, deviceRole as "human" | "dog" | "vest");
                     }
-                  });
-                } catch (intervalError: any) {
-                  this.log(`Error in battery read interval: ${intervalError?.message ?? intervalError}`);
-                  // Don't crash - just log
-                }
+                  } catch {}
+                });
               }, this.BATTERY_READ_INTERVAL_MS);
             }
           }
         } catch (verifyError: any) {
-          // Connection verification failed - but connection might still work
-          this.log(`Info: Could not verify vest connection (connection may still work): ${verifyError?.message ?? verifyError}`);
-          // Non-critical - connection still succeeds, vest can send commands
-          // Don't throw - vest connection is successful even if status sub fails
+          this.log(`Harness verify error (connection may still work): ${verifyError?.message ?? verifyError}`);
         }
       }
 
@@ -1351,247 +1296,126 @@ class BLEManagerReal extends SimpleEmitter {
   // ----------------------------------------------------------
 
   /**
-   * Send therapy command to vest (per NEW_REQUIREMENTS.md)
-   * This is the core function to control the vest
-   * @param commandCode - Therapy command code (0x00-0x0D)
+   * Write a raw UTF-8 string to CMD RX characteristic (beb54840).
+   * All therapy control goes through this method.
    */
-  async sendTherapyCommand(commandCode: number): Promise<boolean> {
-    try {
-      // Validate command code
-      if (typeof commandCode !== 'number' || commandCode < 0 || commandCode > 0x0D) {
-        const error = new Error(`Invalid therapy command code: ${commandCode}. Must be 0x00-0x0D`);
-        this.log(`Failed to send therapy command: ${error.message}`);
-        return false;
-      }
-
-      // Update current therapy mode
-      this.currentTherapyMode = commandCode;
-
-      // Handle Bond Sync mode - start/stop HR updates
-      if (commandCode === THERAPY.BOND_SYNC) {
-        this.startBondSyncMode();
-      } else {
-        // Stop Bond Sync mode for any other command (including STOP)
-        this.stopBondSyncMode();
-      }
-
-      const vest = this.devices.vest;
-      if (!vest) {
-        const error = new Error("Vest not connected");
-        this.log(`Failed to send therapy command: ${error.message}`);
-        return false;
-      }
-
-      // Safety: Check connection
-      try {
-        const isConnected = await vest.isConnected();
-        if (!isConnected) {
-          const error = new Error("Vest device not connected");
-          this.log(`Failed to send therapy command: ${error.message}`);
-          return false;
-        }
-      } catch (connError: any) {
-        const error = new Error(`Connection check failed: ${connError?.message ?? connError}`);
-        this.log(`Failed to send therapy command: ${error.message}`);
-        return false;
-      }
-
-      // Convert number to base64 (BLE requires this)
-      const bytes = new Uint8Array([commandCode]);
-      const base64 = Buffer.from(bytes).toString('base64');
-
-      // Write to vest
-      try {
-        await vest.writeCharacteristicWithResponseForService(
-          VEST_SERVICE_UUID,
-          VEST_COMMAND_UUID,
-          base64
-        );
-
-        const cmdName = Object.keys(THERAPY).find(k => THERAPY[k as keyof typeof THERAPY] === commandCode) ?? 'UNKNOWN';
-        this.log(`✓ Sent therapy command: 0x${commandCode.toString(16).padStart(2, '0')} (${cmdName})`);
-
-        // Emit therapy mode change event
-        this.emit("therapy_mode_changed", { mode: commandCode, name: cmdName });
-
-        return true;
-      } catch (writeError: any) {
-        // Fallback: Try without response
-        try {
-          await vest.writeCharacteristicWithoutResponseForService(
-            VEST_SERVICE_UUID,
-            VEST_COMMAND_UUID,
-            base64
-          );
-          const cmdName = Object.keys(THERAPY).find(k => THERAPY[k as keyof typeof THERAPY] === commandCode) ?? 'UNKNOWN';
-          this.log(`✓ Sent therapy command (no response): 0x${commandCode.toString(16).padStart(2, '0')} (${cmdName})`);
-
-          // Emit therapy mode change event
-          this.emit("therapy_mode_changed", { mode: commandCode, name: cmdName });
-
-          return true;
-        } catch (fallbackError: any) {
-          const error = new Error(`Both write methods failed: ${writeError?.message ?? writeError}`);
-          this.log(`Failed to send therapy command: ${error.message}`);
-          return false;
-        }
-      }
-    } catch (error: any) {
-      this.log(`Failed to send therapy command: ${error?.message ?? error}`);
-      return false;
-    }
-  }
-
-  /**
-   * Send owner heartbeat to vest (for Bond Sync mode)
-   * Per NEW_REQUIREMENTS.md - sends owner's BPM to VEST_HEARTBEAT characteristic
-   * @param bpm - Owner's heart rate in BPM
-   */
-  async sendOwnerHeartbeat(bpm: number): Promise<boolean> {
-    try {
-      // Validate BPM
-      if (typeof bpm !== 'number' || bpm < 30 || bpm > 250) {
-        const error = new Error(`Invalid BPM: ${bpm}. Must be 30-250`);
-        this.log(`Failed to send owner heartbeat: ${error.message}`);
-        return false;
-      }
-
-      const vest = this.devices.vest;
-      if (!vest) {
-        const error = new Error("Vest not connected");
-        this.log(`Failed to send owner heartbeat: ${error.message}`);
-        return false;
-      }
-
-      // Safety: Check connection
-      try {
-        const isConnected = await vest.isConnected();
-        if (!isConnected) {
-          const error = new Error("Vest device not connected");
-          this.log(`Failed to send owner heartbeat: ${error.message}`);
-          return false;
-        }
-      } catch (connError: any) {
-        const error = new Error(`Connection check failed: ${connError?.message ?? connError}`);
-        this.log(`Failed to send owner heartbeat: ${error.message}`);
-        return false;
-      }
-
-      // Convert BPM to base64 (BLE requires this)
-      const bytes = new Uint8Array([Math.round(bpm)]);
-      const base64 = Buffer.from(bytes).toString('base64');
-
-      // Write to vest heartbeat characteristic
-      try {
-        await vest.writeCharacteristicWithResponseForService(
-          VEST_SERVICE_UUID,
-          VEST_HEARTBEAT_UUID,
-          base64
-        );
-        this.log(`✓ Sent owner heartbeat: ${Math.round(bpm)} BPM`);
-        return true;
-      } catch (writeError: any) {
-        // Fallback: Try without response
-        try {
-          await vest.writeCharacteristicWithoutResponseForService(
-            VEST_SERVICE_UUID,
-            VEST_HEARTBEAT_UUID,
-            base64
-          );
-          this.log(`✓ Sent owner heartbeat (no response): ${Math.round(bpm)} BPM`);
-          return true;
-        } catch (fallbackError: any) {
-          const error = new Error(`Both write methods failed: ${writeError?.message ?? writeError}`);
-          this.log(`Failed to send owner heartbeat: ${error.message}`);
-          return false;
-        }
-      }
-    } catch (error: any) {
-      this.log(`Failed to send owner heartbeat: ${error?.message ?? error}`);
-      return false;
-    }
-  }
-
-  /**
-   * Set vest intensity (0-255)
-   * Per NEW_REQUIREMENTS.md - sends intensity to VEST_INTENSITY characteristic
-   * @param intensity - Intensity value (0-255, typically 50-255)
-   */
-  async setVestIntensity(intensity: number): Promise<boolean> {
-    try {
-      // Validate intensity (per requirements: range 50-255, but we allow 0-255)
-      const clampedIntensity = Math.max(0, Math.min(255, Math.round(intensity)));
-
-      const vest = this.devices.vest;
-      if (!vest) {
-        const error = new Error("Vest not connected");
-        this.log(`Failed to set vest intensity: ${error.message}`);
-        return false;
-      }
-
-      // Safety: Check connection
-      try {
-        const isConnected = await vest.isConnected();
-        if (!isConnected) {
-          const error = new Error("Vest device not connected");
-          this.log(`Failed to set vest intensity: ${error.message}`);
-          return false;
-        }
-      } catch (connError: any) {
-        const error = new Error(`Connection check failed: ${connError?.message ?? connError}`);
-        this.log(`Failed to set vest intensity: ${error.message}`);
-        return false;
-      }
-
-      // Convert intensity to base64
-      const bytes = new Uint8Array([clampedIntensity]);
-      const base64 = Buffer.from(bytes).toString('base64');
-
-      // Write to vest intensity characteristic
-      try {
-        await vest.writeCharacteristicWithResponseForService(
-          VEST_SERVICE_UUID,
-          VEST_INTENSITY_UUID,
-          base64
-        );
-        this.log(`✓ Set vest intensity: ${clampedIntensity} (${Math.round((clampedIntensity / 255) * 100)}%)`);
-        return true;
-      } catch (writeError: any) {
-        // Fallback: Try without response
-        try {
-          await vest.writeCharacteristicWithoutResponseForService(
-            VEST_SERVICE_UUID,
-            VEST_INTENSITY_UUID,
-            base64
-          );
-          this.log(`✓ Set vest intensity (no response): ${clampedIntensity} (${Math.round((clampedIntensity / 255) * 100)}%)`);
-          return true;
-        } catch (fallbackError: any) {
-          const error = new Error(`Both write methods failed: ${writeError?.message ?? writeError}`);
-          this.log(`Failed to set vest intensity: ${error.message}`);
-          return false;
-        }
-      }
-    } catch (error: any) {
-      this.log(`Failed to set vest intensity: ${error?.message ?? error}`);
-      return false;
-    }
-  }
-
-  /**
-   * WiFi provisioning (BLE setup only). Write SSID + password to harness, then disconnect.
-   * Per requirements: BLE is used for first-time WiFi setup only.
-   */
-  async writeWifiCredentials(ssid: string, password: string): Promise<boolean> {
+  private async writeCmd(cmd: string): Promise<boolean> {
     const vest = this.devices.vest;
     if (!vest) {
-      this.log("Vest not connected - cannot provision WiFi");
+      this.log(`CMD write failed: harness not connected`);
       return false;
     }
     try {
       const isConnected = await vest.isConnected();
       if (!isConnected) {
-        this.log("Vest not connected");
+        this.log(`CMD write failed: harness not connected`);
+        return false;
+      }
+    } catch (e: any) {
+      this.log(`CMD write failed: ${e?.message ?? e}`);
+      return false;
+    }
+
+    const base64 = Buffer.from(cmd, "utf8").toString("base64");
+    try {
+      await vest.writeCharacteristicWithResponseForService(
+        VEST_SERVICE_UUID,
+        VEST_CMD_RX_UUID,
+        base64
+      );
+      this.log(`✓ CMD sent: ${cmd}`);
+      return true;
+    } catch (writeError: any) {
+      try {
+        await vest.writeCharacteristicWithoutResponseForService(
+          VEST_SERVICE_UUID,
+          VEST_CMD_RX_UUID,
+          base64
+        );
+        this.log(`✓ CMD sent (no-response): ${cmd}`);
+        return true;
+      } catch (fallbackError: any) {
+        this.log(`CMD write failed: ${writeError?.message ?? writeError}`);
+        return false;
+      }
+    }
+  }
+
+  /**
+   * Send CALM command via BLE: writes "CALM:protocol:intensity:duration" to beb54840.
+   * Confirmation arrives on beb54841 as THERAPY:HEARTBEAT within ~1 second.
+   */
+  async sendCalmBLE(protocol: number, intensity: number, duration: number): Promise<boolean> {
+    const cmd = `CALM:${protocol}:${intensity}:${duration}`;
+    this.currentTherapyMode = protocol;
+    const ok = await this.writeCmd(cmd);
+    if (ok) this.emit("therapy_mode_changed", { mode: protocol, name: cmd });
+    return ok;
+  }
+
+  /**
+   * Send STOP command via BLE: writes "STOP" to beb54840.
+   * Confirmation arrives on beb54841 as STOPPED.
+   */
+  async sendStopBLE(): Promise<boolean> {
+    this.currentTherapyMode = null;
+    this.stopBondSyncMode();
+    const ok = await this.writeCmd("STOP");
+    if (ok) this.emit("therapy_mode_changed", { mode: 0, name: "STOP" });
+    return ok;
+  }
+
+  /**
+   * Legacy: send therapy command by code. Now maps codes to the new string format.
+   */
+  async sendTherapyCommand(commandCode: number): Promise<boolean> {
+    if (commandCode === THERAPY.STOP) {
+      return this.sendStopBLE();
+    }
+    if (commandCode === THERAPY.BOND_SYNC) {
+      this.startBondSyncMode();
+    } else {
+      this.stopBondSyncMode();
+    }
+    return this.writeCmd(`CALM:${commandCode}:3:60`);
+  }
+
+  /**
+   * Send owner heartbeat to harness (for Bond Sync mode).
+   * Uses CMD RX characteristic with a HEARTBEAT:bpm string.
+   */
+  async sendOwnerHeartbeat(bpm: number): Promise<boolean> {
+    if (typeof bpm !== 'number' || bpm < 30 || bpm > 250) {
+      this.log(`Invalid BPM: ${bpm}`);
+      return false;
+    }
+    return this.writeCmd(`HEARTBEAT:${Math.round(bpm)}`);
+  }
+
+  /**
+   * @deprecated Intensity is now embedded in the CALM:protocol:intensity:duration string.
+   * Kept for backward compatibility — sends an INTENSITY:value command.
+   */
+  async setVestIntensity(intensity: number): Promise<boolean> {
+    const clamped = Math.max(0, Math.min(255, Math.round(intensity)));
+    return this.writeCmd(`INTENSITY:${clamped}`);
+  }
+
+  /**
+   * WiFi provisioning via BLE (beb54843). Happens once during first setup.
+   * Writes {ssid, password} JSON, then listens for SUCCESS/FAILED on beb54841.
+   * Does NOT disconnect — caller handles navigation on success.
+   */
+  async writeWifiCredentials(ssid: string, password: string): Promise<boolean> {
+    const vest = this.devices.vest;
+    if (!vest) {
+      this.log("Harness not connected - cannot provision WiFi");
+      return false;
+    }
+    try {
+      const isConnected = await vest.isConnected();
+      if (!isConnected) {
+        this.log("Harness not connected");
         return false;
       }
       const payload = JSON.stringify({ ssid: ssid.trim(), password: password.trim() });
@@ -1601,11 +1425,7 @@ class BLEManagerReal extends SimpleEmitter {
         VEST_WIFI_PROVISION_UUID,
         base64
       );
-      this.log("WiFi credentials written; disconnecting after provisioning.");
-      await vest.cancelConnection();
-      this.connectedRoles.vest = false;
-      if (this.devices.vest === vest) delete this.devices.vest;
-      this.emitConnections();
+      this.log("WiFi credentials written to harness via beb54843");
       return true;
     } catch (e: any) {
       this.log("WiFi provision failed: " + (e?.message ?? e));
@@ -1622,91 +1442,10 @@ class BLEManagerReal extends SimpleEmitter {
     }
   }
 
-  // Legacy method - kept for backward compatibility
+  /** @deprecated Legacy method — use sendCalmBLE / sendStopBLE instead. */
   private async writeVestCommandCodeLegacy(commandCode: number): Promise<void> {
-    const vest = this.devices.vest;
-    if (!vest) {
-      const error = new Error("Vest not connected - device not found in devices.vest");
-      this.log(`Failed to write vest command: ${error.message}`);
-      throw error;
-    }
-
-    try {
-      // Safety: Validate command code (updated to 0x0D max per new requirements)
-      if (typeof commandCode !== 'number' || commandCode < 0 || commandCode > 0x0D) {
-        const error = new Error(`Invalid command code: ${commandCode}. Must be 0x00-0x0D`);
-        this.log(`Failed to write vest command: ${error.message}`);
-        throw error;
-      }
-
-      const isConnected = await vest.isConnected();
-      if (!isConnected) {
-        const error = new Error("Vest device not connected - isConnected() returned false");
-        this.log(`Failed to write vest command: ${error.message}`);
-        throw error;
-      }
-
-      // Verify service and characteristic exist
-      try {
-        const services = await vest.services();
-        const vestService = services.find(s => s.uuid.toLowerCase() === VEST_SERVICE_UUID.toLowerCase());
-        if (!vestService) {
-          const error = new Error(`Vest service not found. Available services: ${services.map(s => s.uuid).join(', ')}`);
-          this.log(`Failed to write vest command: ${error.message}`);
-          throw error;
-        }
-
-        const characteristics = await vestService.characteristics();
-        const commandChar = characteristics.find(c => c.uuid.toLowerCase() === VEST_COMMAND_UUID.toLowerCase());
-        if (!commandChar) {
-          const error = new Error(`Vest command characteristic not found. Available: ${characteristics.map(c => c.uuid).join(', ')}`);
-          this.log(`Failed to write vest command: ${error.message}`);
-          throw error;
-        }
-
-        this.log(`Vest service and characteristic found. Service: ${vestService.uuid}, Char: ${commandChar.uuid}`);
-      } catch (discoveryError: any) {
-        this.log(`Warning: Could not verify service/characteristic: ${discoveryError?.message ?? discoveryError}`);
-        // Continue anyway - might still work
-      }
-
-      const data = new Uint8Array([commandCode]);
-      const b64 = Buffer.from(data).toString("base64");
-
-      const cmdName = Object.keys(THERAPY).find(k => THERAPY[k as keyof typeof THERAPY] === commandCode) ?? 'UNKNOWN';
-      this.log(`Attempting to send vest command: 0x${commandCode.toString(16).padStart(2, '0')} (${cmdName}), base64: ${b64}, raw bytes: [${commandCode}]`);
-
-      // Try withResponse first (preferred method)
-      try {
-        await vest.writeCharacteristicWithResponseForService(
-          VEST_SERVICE_UUID,
-          VEST_COMMAND_UUID,
-          b64
-        );
-        this.log(`✓ Successfully sent vest command with response: 0x${commandCode.toString(16).padStart(2, '0')} (${cmdName})`);
-        return;
-      } catch (withResponseError: any) {
-        this.log(`writeCharacteristicWithResponseForService failed: ${withResponseError?.message ?? withResponseError}. Trying withoutResponse...`);
-
-        // Fallback: Try withoutResponse (some ESP32 devices prefer this)
-        try {
-          await vest.writeCharacteristicWithoutResponseForService(
-            VEST_SERVICE_UUID,
-            VEST_COMMAND_UUID,
-            b64
-          );
-          this.log(`✓ Successfully sent vest command without response: 0x${commandCode.toString(16).padStart(2, '0')} (${cmdName})`);
-          return;
-        } catch (withoutResponseError: any) {
-          const error = new Error(`Both write methods failed. WithResponse: ${withResponseError?.message ?? withResponseError}. WithoutResponse: ${withoutResponseError?.message ?? withoutResponseError}`);
-          this.log(`Failed to write vest command: ${error.message}`);
-          throw error;
-        }
-      }
-    } catch (error: any) {
-      this.log(`Failed to write vest command: ${error?.message ?? error}`);
-      throw error;
-    }
+    const ok = await this.sendTherapyCommand(commandCode);
+    if (!ok) throw new Error(`Failed to send therapy command: ${commandCode}`);
   }
 
   // Set custom vibration with intensity (0-255) - legacy method
@@ -1730,251 +1469,141 @@ class BLEManagerReal extends SimpleEmitter {
     }
   }
 
-  // Subscribe to vest status (optional, for monitoring)
-  // CRITICAL: This should NEVER crash - vest works fine without status subscription
+  /**
+   * Subscribe to STATUS TX characteristic (beb54841) for therapy confirmation.
+   * ESP32 sends: THERAPY:HEARTBEAT, STOPPED, COOLDOWN:180, CONNECTED
+   * This is the PRIMARY way to confirm therapy — NOT Firebase.
+   */
   private async subscribeVestStatus(device: Device): Promise<void> {
     try {
-      // Safety: Verify device is connected
       if (!device) {
-        this.log("Cannot subscribe to vest status - device is null");
+        this.log("Cannot subscribe to harness status - device is null");
         return;
       }
 
-      // Add timeout to connection check
       let isConnected = false;
       try {
-        const connectCheckPromise = device.isConnected();
-        const connectTimeout = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("Connection check timeout")), 2000)
-        );
-        isConnected = await Promise.race([connectCheckPromise, connectTimeout]) as boolean;
-      } catch (connectError: any) {
-        this.log(`Vest connection check failed (skipping status subscription): ${connectError?.message ?? connectError}`);
+        isConnected = await Promise.race([
+          device.isConnected(),
+          new Promise<boolean>((_, reject) => setTimeout(() => reject(new Error("timeout")), 2000)),
+        ]);
+      } catch {
+        this.log("Harness connection check failed, skipping status subscription");
         return;
       }
+      if (!isConnected) return;
 
-      if (!isConnected) {
-        this.log("Vest not connected, cannot subscribe to status");
-        return;
-      }
-
-      // Safety: Verify service exists with timeout
-      let services;
-      try {
-        const servicePromise = device.services();
-        const serviceTimeout = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("Service read timeout")), 3000)
-        );
-        services = await Promise.race([servicePromise, serviceTimeout]) as any[];
-      } catch (serviceError: any) {
-        this.log(`Failed to get services for vest (skipping status subscription): ${serviceError?.message ?? serviceError}`);
-        return;
-      }
-
-      if (!Array.isArray(services) || services.length === 0) {
-        this.log(`No services found for vest (skipping status subscription)`);
-        return;
-      }
-
-      const vestService = services.find(s => s.uuid.toLowerCase() === VEST_SERVICE_UUID.toLowerCase());
-      if (!vestService) {
-        this.log(`Vest service not found. Available: ${services.map(s => s.uuid).join(', ')}`);
-        return;
-      }
-
-      // Safety: Verify status characteristic exists with timeout
-      let characteristics;
-      try {
-        const charPromise = vestService.characteristics();
-        const charTimeout = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("Characteristic read timeout")), 3000)
-        );
-        characteristics = await Promise.race([charPromise, charTimeout]) as any[];
-      } catch (charError: any) {
-        this.log(`Failed to get characteristics for vest (skipping status subscription): ${charError?.message ?? charError}`);
-        return;
-      }
-
-      if (!Array.isArray(characteristics) || characteristics.length === 0) {
-        this.log(`No characteristics found for vest service (skipping status subscription)`);
-        return;
-      }
-
-      const statusChar = characteristics.find(c => c.uuid.toLowerCase() === VEST_STATUS_UUID.toLowerCase());
-      if (!statusChar) {
-        this.log(`Vest status characteristic not found. Available: ${characteristics.map(c => c.uuid).join(', ')}`);
-        return;
-      }
-
-      // Safety: Check if characteristic supports notifications
-      const properties = statusChar.properties || [];
-      const supportsNotify = properties.includes("notify") || properties.includes("indicate");
-      if (!supportsNotify) {
-        this.log(`Vest status characteristic does not support notifications. Properties: ${properties.join(', ')}`);
-        return;
-      }
-
-      // Subscribe to status notifications with error handling
-      try {
-        const subscription = device.monitorCharacteristicForService(
-          VEST_SERVICE_UUID,
-          VEST_STATUS_UUID,
-          (error, characteristic) => {
-            try {
-              if (error) {
-                this.log(`Vest status notification error (non-critical): ${error.message}`);
-                return;
-              }
-              if (characteristic?.value) {
-                try {
-                  const buffer = Buffer.from(characteristic.value, "base64");
-                  const status = buffer.toString("utf-8");
-
-                  // Log raw data for debugging
-                  const hexBytes = Array.from(buffer).map(b => b.toString(16).padStart(2, '0')).join(' ');
-                  this.log(`Vest status raw bytes: [${hexBytes}], decoded: ${status}`);
-                  this.emit("vest_status", { status });
-
-                  // Parse battery from vest status
-                  let battery: number | undefined;
-
-                  // Try parsing as JSON first (if status is JSON string)
-                  try {
-                    const jsonData = JSON.parse(status);
-                    this.log(`Vest status parsed as JSON: ${JSON.stringify(jsonData)}`);
-                    if (typeof jsonData.battery === 'number' && jsonData.battery >= 0 && jsonData.battery <= 100) {
-                      battery = jsonData.battery;
-                      this.log(`Vest battery from JSON: ${battery}%`);
-                    } else if (typeof jsonData.bat === 'number' && jsonData.bat >= 0 && jsonData.bat <= 100) {
-                      // Try alternative key 'bat'
-                      battery = jsonData.bat;
-                      this.log(`Vest battery from JSON (bat key): ${battery}%`);
-                    } else if (typeof jsonData.batt === 'number' && jsonData.batt >= 0 && jsonData.batt <= 100) {
-                      // Try alternative key 'batt'
-                      battery = jsonData.batt;
-                      this.log(`Vest battery from JSON (batt key): ${battery}%`);
-                    }
-                  } catch {
-                    // Not JSON, try other parsing methods
-                    this.log(`Vest status is not JSON, trying binary/text parsing`);
-
-                    // Try parsing as "battery:XX" or "bat:XX" text format
-                    const batteryMatch = status.match(/(?:battery|bat|batt)[:\s]*(\d+)/i);
-                    if (batteryMatch) {
-                      const parsedBattery = parseInt(batteryMatch[1], 10);
-                      if (parsedBattery >= 0 && parsedBattery <= 100) {
-                        battery = parsedBattery;
-                        this.log(`Vest battery from text pattern: ${battery}%`);
-                      }
-                    }
-
-                    // Try binary (first byte might be battery) - but only if it's in typical battery range
-                    if (battery === undefined && buffer.length > 0) {
-                      const firstByte = buffer[0];
-                      // ESP32 might send raw battery percentage as first byte
-                      if (firstByte >= 0 && firstByte <= 100) {
-                        battery = firstByte;
-                        this.log(`Vest battery from first byte: ${battery}%`);
-                      }
-                    }
-                  }
-
-                  // Emit vest data with battery if found (similar to human/dog data)
-                  if (battery !== undefined) {
-                    try {
-                      this.emit("data", {
-                        profile: "vest",
-                        battery: battery,
-                      });
-                      this.log(`✓ Vest battery emitted: ${battery}%`);
-                    } catch (emitError: any) {
-                      this.log(`Error emitting vest battery data: ${emitError?.message ?? emitError}`);
-                    }
-                  } else {
-                    this.log(`Could not extract battery from vest status data`);
-                  }
-                } catch (parseError: any) {
-                  this.log(`Failed to parse vest status: ${parseError?.message ?? parseError}`);
-                }
-              }
-            } catch (callbackError: any) {
-              // Prevent callback errors from crashing
-              this.log(`Error in vest status callback: ${callbackError?.message ?? callbackError}`);
+      const subscription = device.monitorCharacteristicForService(
+        VEST_SERVICE_UUID,
+        VEST_STATUS_TX_UUID,
+        (error, characteristic) => {
+          try {
+            if (error) {
+              this.log(`Status notify error: ${error.message}`);
+              return;
             }
-          }
-        );
+            if (!characteristic?.value) return;
 
-        // CRITICAL: Store subscription for cleanup to prevent memory leaks
-        if (subscription) {
-          const deviceId = device.id;
-          if (!this.deviceSubscriptions.has(deviceId)) {
-            this.deviceSubscriptions.set(deviceId, []);
+            const status = Buffer.from(characteristic.value, "base64").toString("utf-8").trim();
+            this.log(`◀ STATUS: ${status}`);
+
+            if (status.startsWith("THERAPY:")) {
+              this.emit("therapy_confirmed", { status: "running", raw: status });
+            } else if (status === "STOPPED") {
+              this.currentTherapyMode = null;
+              this.emit("therapy_confirmed", { status: "stopped", raw: status });
+            } else if (status.startsWith("COOLDOWN:")) {
+              const secs = parseInt(status.split(":")[1], 10) || 0;
+              this.emit("therapy_confirmed", { status: "cooldown", cooldownSecs: secs, raw: status });
+            } else if (status === "CONNECTED") {
+              this.log("Harness acknowledged BLE connection");
+              this.emit("therapy_confirmed", { status: "connected", raw: status });
+            } else if (status === "SUCCESS") {
+              this.emit("wifi_provision_result", { success: true });
+            } else if (status === "FAILED") {
+              this.emit("wifi_provision_result", { success: false });
+            }
+
+            this.emit("vest_status", { status });
+          } catch (e: any) {
+            this.log(`Status callback error: ${e?.message ?? e}`);
           }
-          this.deviceSubscriptions.get(deviceId)!.push(subscription);
-          this.subscriptions.push(subscription);
-          this.log("Successfully subscribed to vest status notifications");
         }
-      } catch (monitorError: any) {
-        // Monitor subscription failed - this is OK, vest works without it
-        this.log(`Failed to start monitoring vest status (this is OK): ${monitorError?.message ?? monitorError}`);
-        // Don't throw - vest connection should still succeed
+      );
+
+      if (subscription) {
+        const deviceId = device.id;
+        if (!this.deviceSubscriptions.has(deviceId)) {
+          this.deviceSubscriptions.set(deviceId, []);
+        }
+        this.deviceSubscriptions.get(deviceId)!.push(subscription);
+        this.subscriptions.push(subscription);
+        this.log("Subscribed to harness STATUS (beb54841) for therapy confirmation");
       }
     } catch (error: any) {
-      // Catch-all to prevent any crash
-      this.log(`Vest status subscription error (non-critical): ${error?.message ?? error}`);
-      // Non-critical - vest works without status subscription
-      // Don't throw - connection should still succeed
+      this.log(`Status subscription error (non-critical): ${error?.message ?? error}`);
     }
   }
 
-  // Legacy method for backward compatibility
-  private async writeVestCommand(payload: string) {
-    // Try to parse as JSON for comfort signals, otherwise send as command code
+  /**
+   * Subscribe to TELEMETRY TX characteristic (beb54842).
+   * ESP32 sends JSON every 3s with live state (state, anxietyScore, battery, etc.).
+   * App emits "telemetry" event so FirebaseContext can bridge it to RTDB.
+   */
+  private async subscribeTelemetry(device: Device): Promise<void> {
     try {
-      const parsed = JSON.parse(payload);
-      if (parsed.action === "comfort") {
-        // Map comfort signals to vest commands
-        if (parsed.vibration === "gentle") {
-          await this.sendTherapyCommand(THERAPY.MASSAGE);
-        } else if (parsed.vibration === "pulse") {
-          await this.sendTherapyCommand(THERAPY.CALM);
-        } else {
-          await this.sendTherapyCommand(THERAPY.CALM);
-        }
-        return;
-      }
-    } catch {
-      // Not JSON, try as command code
-      const commandCode = parseInt(payload, 10);
-      if (!isNaN(commandCode) && commandCode >= 0 && commandCode <= 0x0D) {
-        await this.sendTherapyCommand(commandCode);
-        return;
-      }
-    }
+      if (!device) return;
+      let isConnected = false;
+      try {
+        isConnected = await Promise.race([
+          device.isConnected(),
+          new Promise<boolean>((_, reject) => setTimeout(() => reject(new Error("timeout")), 2000)),
+        ]);
+      } catch { return; }
+      if (!isConnected) return;
 
-    // Fallback: send as raw string (legacy behavior)
-    const vest = this.devices.vest;
-    if (!vest) {
-      throw new Error("Vest not connected");
-    }
-
-    try {
-      const isConnected = await vest.isConnected();
-      if (!isConnected) {
-        throw new Error("Vest device not connected");
-      }
-
-      const b64 = Buffer.from(payload, "utf8").toString("base64");
-      await vest.writeCharacteristicWithResponseForService(
+      const subscription = device.monitorCharacteristicForService(
         VEST_SERVICE_UUID,
-        VEST_COMMAND_UUID,
-        b64
+        VEST_TELEMETRY_TX_UUID,
+        (error, characteristic) => {
+          try {
+            if (error) {
+              this.log(`Telemetry notify error: ${error.message}`);
+              return;
+            }
+            if (!characteristic?.value) return;
+
+            const raw = Buffer.from(characteristic.value, "base64").toString("utf-8").trim();
+            try {
+              const telemetry = JSON.parse(raw);
+              this.emit("telemetry", telemetry);
+            } catch {
+              this.log(`Telemetry parse error: ${raw.substring(0, 80)}`);
+            }
+          } catch (e: any) {
+            this.log(`Telemetry callback error: ${e?.message ?? e}`);
+          }
+        }
       );
-      this.log(`Sent comfort payload: ${payload}`);
+
+      if (subscription) {
+        const deviceId = device.id;
+        if (!this.deviceSubscriptions.has(deviceId)) {
+          this.deviceSubscriptions.set(deviceId, []);
+        }
+        this.deviceSubscriptions.get(deviceId)!.push(subscription);
+        this.subscriptions.push(subscription);
+        this.log("Subscribed to harness TELEMETRY (beb54842) for live data bridge");
+      }
     } catch (error: any) {
-      this.log(`Failed to write vest command: ${error?.message ?? error}`);
-      throw error;
+      this.log(`Telemetry subscription error: ${error?.message ?? error}`);
     }
+  }
+
+  /** @deprecated Legacy wrapper — forwards to writeCmd. */
+  private async writeVestCommand(payload: string) {
+    const ok = await this.writeCmd(payload);
+    if (!ok) throw new Error("Failed to write command to harness");
   }
 
   sendComfortSignal(

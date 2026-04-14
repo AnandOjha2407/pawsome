@@ -1,4 +1,5 @@
-// Calm Now: Pipe 2 writes to RTDB commands/latest; Pipe 3 feedback via liveState.therapyActive
+// Calm Now: sends therapy via BLE (primary) or Firebase (remote fallback).
+// Confirmation is from BLE beb54841 STATUS — NOT Firebase therapyActive.
 import React, { useState, useEffect, useRef } from "react";
 import {
   View,
@@ -25,8 +26,6 @@ const INTENSITY_LABELS: Record<number, string> = {
   5: "Max",
 };
 
-const STATUS_TIMEOUT_MS = 10000;
-
 function therapyDisplayName(therapyActive: string): string {
   const entry = THERAPY_ACTIVE_DISPLAY[therapyActive];
   return entry?.name ?? (therapyActive && therapyActive !== "NONE" ? therapyActive : "None active");
@@ -40,106 +39,104 @@ export default function CalmPlaceholder() {
   const [duration, setDuration] = useState(60);
   const [sending, setSending] = useState(false);
   const [sendingStop, setSendingStop] = useState(false);
-  const [waitingForDevice, setWaitingForDevice] = useState(false);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [bleTherapyRunning, setBleTherapyRunning] = useState(false);
+  const [cooldownSecs, setCooldownSecs] = useState(0);
 
   const deviceId = firebase?.deviceId;
   const liveState = firebase?.liveState ?? null;
-  const therapyActive = (liveState?.therapyActive ?? "NONE").trim() || "NONE";
-  const isTherapyRunning = therapyActive !== "NONE";
-  const vestConnected = (bleManager as any)?.getConnections?.()?.connected?.vest ?? false;
+  const firebaseTherapy = (liveState?.therapyActive ?? "NONE").trim() || "NONE";
+  const vestConnected = bleManager?.getConnections?.()?.connected?.vest ?? false;
+  const isTherapyRunning = bleTherapyRunning || firebaseTherapy !== "NONE";
 
+  // Listen to BLE STATUS characteristic (beb54841) for instant therapy confirmation
   useEffect(() => {
-    return () => {
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    const onStatus = (evt: { status: string; cooldownSecs?: number }) => {
+      if (evt.status === "running") {
+        setBleTherapyRunning(true);
+        setSending(false);
+        setCooldownSecs(0);
+      } else if (evt.status === "stopped") {
+        setBleTherapyRunning(false);
+        setSendingStop(false);
+        setCooldownSecs(0);
+      } else if (evt.status === "cooldown") {
+        setBleTherapyRunning(false);
+        setSending(false);
+        setCooldownSecs(evt.cooldownSecs ?? 0);
+      }
     };
+    bleManager.on("therapy_confirmed", onStatus);
+    return () => { bleManager.off("therapy_confirmed", onStatus); };
   }, []);
 
-  // Pipe 3: when we're waiting for device and therapyActive becomes non-NONE, stop waiting
+  // Tick down cooldown timer
   useEffect(() => {
-    if (waitingForDevice && isTherapyRunning) {
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
-      setSending(false);
-      setWaitingForDevice(false);
-    }
-  }, [waitingForDevice, isTherapyRunning]);
-
-  /** Map app protocol 1–8 to BLE therapy codes (fallback when no Device ID) */
-  const protocolToBLECode = (p: number): number => {
-    const map: Record<number, number> = {
-      1: THERAPY.CALM, 2: THERAPY.CALM, 3: THERAPY.MASSAGE, 4: THERAPY.CALM,
-      5: THERAPY.CALM, 6: THERAPY.CALM, 7: THERAPY.CALM, 8: THERAPY.SLEEP,
-    };
-    return map[p] ?? THERAPY.CALM;
-  };
+    if (cooldownSecs <= 0) return;
+    const id = setInterval(() => setCooldownSecs((s) => Math.max(0, s - 1)), 1000);
+    return () => clearInterval(id);
+  }, [cooldownSecs > 0]);
 
   const handleStart = async () => {
-    if (!deviceId || !firebase?.sendCalm) {
-      if (vestConnected && typeof (bleManager as any).sendTherapyCommand === "function") {
-        setSending(true);
-        try {
-          const code = protocolToBLECode(protocol);
-          const intensityByte = Math.round((intensity / 5) * 255);
-          await (bleManager as any).setVestIntensity?.(intensityByte);
-          const ok = await (bleManager as any).sendTherapyCommand(code);
-          if (ok) Alert.alert("Sent", "Calm signal sent via BLE.");
-          else Alert.alert("Error", "Failed to send.");
-        } catch (e: any) {
-          Alert.alert("Error", e?.message ?? "Failed to send.");
-        } finally {
+    setSending(true);
+
+    // Primary path: send via BLE when harness is connected
+    if (vestConnected) {
+      try {
+        const ok = await bleManager.sendCalmBLE(protocol, intensity, duration);
+        if (!ok) {
+          Alert.alert("Error", "Failed to send command to harness.");
           setSending(false);
         }
-      } else {
-        Alert.alert("Set Device ID", "Set Device ID in Settings to send therapy to the harness.");
+        // Confirmation will arrive via therapy_confirmed event → setSending(false)
+      } catch (e: any) {
+        Alert.alert("Error", e?.message ?? "Failed to send.");
+        setSending(false);
+      }
+      // Also write to Firebase for history logging (fire-and-forget)
+      if (deviceId && firebase?.sendCalm) {
+        firebase.sendCalm(protocol, intensity, duration).catch(() => {});
       }
       return;
     }
 
-    setSending(true);
-    setWaitingForDevice(true);
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
-
-    try {
-      const result = await firebase.sendCalm(protocol, intensity, duration);
-      if (!result) {
-        Alert.alert("Error", "Failed to send command.");
+    // Fallback: send via Firebase when BLE not connected (owner away)
+    if (deviceId && firebase?.sendCalm) {
+      try {
+        const result = await firebase.sendCalm(protocol, intensity, duration);
+        if (!result) {
+          Alert.alert("Error", "Failed to send command.");
+        }
+      } catch (e: any) {
+        Alert.alert("Error", e?.message ?? "Failed to send.");
+      } finally {
         setSending(false);
-        setWaitingForDevice(false);
-        return;
       }
-
-      timeoutRef.current = setTimeout(() => {
-        timeoutRef.current = null;
-        setSending(false);
-        setWaitingForDevice(false);
-        Alert.alert("Timeout", "No response from device in 10 seconds. Check connection and Device ID.");
-      }, STATUS_TIMEOUT_MS);
-    } catch (e: any) {
-      Alert.alert("Error", e?.message ?? "Failed to send.");
-      setSending(false);
-      setWaitingForDevice(false);
+      return;
     }
+
+    Alert.alert("Not Connected", "Connect to harness via BLE or set Device ID in Settings.");
+    setSending(false);
   };
 
   const handleEmergencyStop = async () => {
     setSendingStop(true);
     try {
+      // BLE path first (instant)
+      if (vestConnected) {
+        const ok = await bleManager.sendStopBLE();
+        if (!ok) Alert.alert("Error", "Failed to send stop.");
+        // Confirmation via therapy_confirmed → setSendingStop(false)
+      }
+      // Also send via Firebase
       if (deviceId && firebase?.sendStop) {
-        const id = await firebase.sendStop();
-        if (id) {
-          // Optional: could watch for therapyActive clear like Dashboard
-        } else {
-          Alert.alert("Error", "Failed to send stop.");
-        }
-      } else if (vestConnected && typeof (bleManager as any).sendTherapyCommand === "function") {
-        await (bleManager as any).sendTherapyCommand(THERAPY.STOP);
-      } else {
-        Alert.alert("Set Device ID", "Set Device ID in Settings for remote control.");
+        await firebase.sendStop();
+      }
+      if (!vestConnected && !deviceId) {
+        Alert.alert("Not Connected", "No BLE or cloud connection available.");
+        setSendingStop(false);
       }
     } catch (e: any) {
       Alert.alert("Error", e?.message ?? "Failed.");
-    } finally {
       setSendingStop(false);
     }
   };
@@ -234,22 +231,30 @@ export default function CalmPlaceholder() {
           ))}
         </View>
 
-        {/* Pipe 3: status from therapyActive. Show Start when none active, Stop when running. */}
         {isTherapyRunning ? (
-          <View style={[styles.therapyStatusCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
-            <Text style={[styles.therapyStatusLabel, { color: theme.textMuted }]}>{therapyDisplayName(therapyActive)} running</Text>
+          <View style={[styles.therapyStatusCard, { backgroundColor: theme.card, borderColor: "#3FB950" }]}>
+            <Text style={[styles.therapyStatusLabel, { color: "#3FB950" }]}>
+              {bleTherapyRunning ? "Therapy running (confirmed by harness)" : therapyDisplayName(firebaseTherapy) + " running"}
+            </Text>
+          </View>
+        ) : null}
+        {cooldownSecs > 0 ? (
+          <View style={[styles.therapyStatusCard, { backgroundColor: theme.card, borderColor: "#D29922" }]}>
+            <Text style={[styles.therapyStatusLabel, { color: "#D29922" }]}>
+              Cooldown active — try again in {cooldownSecs}s
+            </Text>
           </View>
         ) : null}
         <TouchableOpacity
           onPress={handleStart}
-          disabled={sending || isTherapyRunning}
-          style={[styles.startBtn, { backgroundColor: theme.primary, opacity: sending || isTherapyRunning ? 0.6 : 1 }]}
+          disabled={sending || isTherapyRunning || cooldownSecs > 0}
+          style={[styles.startBtn, { backgroundColor: theme.primary, opacity: sending || isTherapyRunning || cooldownSecs > 0 ? 0.6 : 1 }]}
         >
           {sending ? (
             <View style={styles.sendingWrap}>
               <ActivityIndicator size="small" color="#000" />
               <Text style={[styles.statusText, { color: theme.textDark }]}>
-                Sending… waiting for device (check therapy status in ~5s)
+                Sending to harness…
               </Text>
             </View>
           ) : (

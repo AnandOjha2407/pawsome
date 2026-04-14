@@ -4,12 +4,15 @@ import {
   sendCalmCommand,
   sendStopCommand,
   syncDeviceIdToBackend,
+  writeLiveTelemetry,
   LiveState,
 } from "../firebase/firebase";
 import auth, { FirebaseAuthTypes } from "@react-native-firebase/auth";
 import { GoogleSignin, statusCodes } from "@react-native-google-signin/google-signin";
 import { getDeviceId } from "../storage/deviceId";
 import { MOCK_DEVICE_ID, getMockLiveState } from "../mock/mockData";
+import { clearIdTokenFromKeychain, saveIdTokenToKeychain } from "../auth/tokenKeychain";
+import { bleManager } from "../ble/BLEManager";
 
 type FirebaseContextValue = {
   user: FirebaseAuthTypes.User | null;
@@ -32,6 +35,16 @@ type FirebaseContextValue = {
 };
 
 const FirebaseContext = createContext<FirebaseContextValue | null>(null);
+
+async function persistIdTokenForUser(u: FirebaseAuthTypes.User | null) {
+  if (!u) return;
+  try {
+    const token = await u.getIdToken();
+    await saveIdTokenToKeychain(token);
+  } catch (e) {
+    console.warn("[Auth] Keychain ID token save failed", e);
+  }
+}
 
 export function FirebaseProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<FirebaseAuthTypes.User | null>(null);
@@ -67,13 +80,32 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
     return () => unsub?.();
   }, []);
 
+  useEffect(() => {
+    const unsub = auth().onIdTokenChanged(async (u) => {
+      if (!u) {
+        await clearIdTokenFromKeychain();
+        return;
+      }
+      try {
+        const token = await u.getIdToken();
+        await saveIdTokenToKeychain(token);
+      } catch (e) {
+        console.warn("[Auth] Keychain ID token refresh failed", e);
+      }
+    });
+    return () => unsub();
+  }, []);
+
   const signIn = useCallback(async (email: string, password: string) => {
-    await auth().signInWithEmailAndPassword(email, password);
+    const cred = await auth().signInWithEmailAndPassword(email, password);
+    await persistIdTokenForUser(cred.user);
   }, []);
   const signUp = useCallback(async (email: string, password: string) => {
-    await auth().createUserWithEmailAndPassword(email, password);
+    const cred = await auth().createUserWithEmailAndPassword(email, password);
+    await persistIdTokenForUser(cred.user);
   }, []);
   const signOut = useCallback(async () => {
+    await clearIdTokenFromKeychain();
     try {
       await GoogleSignin.signOut();
     } catch {
@@ -86,9 +118,10 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
     try {
       await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
       const userInfo = await GoogleSignin.signIn();
-      let idToken = userInfo.idToken;
+      // SignInResponse: idToken may be top-level or under .data (library typings vary by version)
+      const res = userInfo as { idToken?: string | null; data?: { idToken?: string | null } };
+      let idToken = res.idToken ?? res.data?.idToken ?? null;
 
-      // Fallback: some devices return tokens via getTokens()
       if (!idToken) {
         const tokens = await GoogleSignin.getTokens();
         idToken = tokens.idToken;
@@ -99,7 +132,8 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
       }
 
       const googleCredential = auth.GoogleAuthProvider.credential(idToken);
-      await auth().signInWithCredential(googleCredential);
+      const cred = await auth().signInWithCredential(googleCredential);
+      await persistIdTokenForUser(cred.user);
     } catch (e: any) {
       if (e?.code === statusCodes.SIGN_IN_CANCELLED) {
         // user cancelled, not an error for the UI
@@ -186,6 +220,16 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
         unsub?.();
       } catch (_) {}
     };
+  }, [deviceId]);
+
+  // BLE data bridge: receive telemetry from beb54842, write to Firebase RTDB
+  useEffect(() => {
+    if (!deviceId || deviceId === MOCK_DEVICE_ID) return;
+    const onTelemetry = (telemetry: Record<string, unknown>) => {
+      writeLiveTelemetry(deviceId, telemetry).catch(() => {});
+    };
+    bleManager.on("telemetry", onTelemetry);
+    return () => { bleManager.off("telemetry", onTelemetry); };
   }, [deviceId]);
 
   const sendCalm = useCallback(

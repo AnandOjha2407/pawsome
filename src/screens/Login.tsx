@@ -9,13 +9,14 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { MaterialIcons } from "@expo/vector-icons";
+import { MaterialIcons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useTheme } from "../ThemeProvider";
 import { useFirebase } from "../context/FirebaseContext";
 
-export default function Login({ onSignUp, onSuccess }: { onSignUp?: () => void; onSuccess?: () => void }) {
+export default function Login({ onSignUp, onSuccess, onGuestMode, guestLoading }: { onSignUp?: () => void; onSuccess?: () => void; onGuestMode?: () => void; guestLoading?: boolean }) {
   const { theme } = useTheme();
   const firebase = useFirebase();
   const [email, setEmail] = useState("");
@@ -63,7 +64,8 @@ export default function Login({ onSignUp, onSuccess }: { onSignUp?: () => void; 
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={["top"]}>
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.inner}>
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
+        <ScrollView contentContainerStyle={styles.inner} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
         <Text style={[styles.title, { color: theme.textDark }]}>Log in</Text>
         <Text style={[styles.subtitle, { color: theme.textMuted }]}>Email and password</Text>
         {error && (
@@ -137,13 +139,32 @@ export default function Login({ onSignUp, onSuccess }: { onSignUp?: () => void; 
                 <ActivityIndicator color={theme.textDark} />
               ) : (
                 <>
-                  <MaterialIcons name="google" size={20} color={theme.textDark} style={{ marginRight: 8 }} />
+                  <MaterialCommunityIcons name="google" size={20} color={theme.textDark} style={{ marginRight: 8 }} />
                   <Text style={[styles.googleBtnText, { color: theme.textDark }]}>Continue with Google</Text>
                 </>
               )}
             </TouchableOpacity>
           </>
         )}
+        {onGuestMode && (
+          <>
+            <View style={styles.dividerRow}>
+              <View style={[styles.divider, { borderBottomColor: theme.border }]} />
+            </View>
+            <TouchableOpacity
+              onPress={onGuestMode}
+              disabled={guestLoading}
+              style={[styles.guestBtn, { borderColor: "#D29922", backgroundColor: "#D2992210" }]}
+            >
+              {guestLoading ? (
+                <ActivityIndicator size="small" color="#D29922" />
+              ) : (
+                <Text style={[styles.guestBtnText, { color: "#D29922" }]}>Continue as Guest (Dog Walker)</Text>
+              )}
+            </TouchableOpacity>
+          </>
+        )}
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -151,7 +172,7 @@ export default function Login({ onSignUp, onSuccess }: { onSignUp?: () => void; 
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  inner: { flex: 1, padding: 24, justifyContent: "center" },
+  inner: { flexGrow: 1, padding: 24, justifyContent: "center" },
   title: { fontSize: 26, fontWeight: "800", marginBottom: 8 },
   subtitle: { fontSize: 14, marginBottom: 24 },
   errorBox: {
@@ -202,5 +223,16 @@ const styles = StyleSheet.create({
   googleBtnText: {
     fontSize: 15,
     fontWeight: "600",
+  },
+  guestBtn: {
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    alignItems: "center",
+    marginTop: 16,
+  },
+  guestBtnText: {
+    fontSize: 15,
+    fontWeight: "700",
   },
 });

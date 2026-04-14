@@ -11,7 +11,7 @@ import {
   Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { MaterialIcons } from "@expo/vector-icons";
+import { MaterialIcons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useTheme } from "../ThemeProvider";
 import { useFirebase } from "../context/FirebaseContext";
 
@@ -171,7 +171,7 @@ export default function SignUp({ onBack, onSuccess }: { onBack?: () => void; onS
                 <ActivityIndicator color={theme.textDark} />
               ) : (
                 <>
-                  <MaterialIcons name="google" size={20} color={theme.textDark} style={{ marginRight: 8 }} />
+                  <MaterialCommunityIcons name="google" size={20} color={theme.textDark} style={{ marginRight: 8 }} />
                   <Text style={[styles.googleBtnText, { color: theme.textDark }]}>Continue with Google</Text>
                 </>
               )}

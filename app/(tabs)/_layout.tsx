@@ -138,6 +138,16 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
+        name="log"
+        options={{
+          title: "Log",
+          tabBarLabel: "Log",
+          tabBarIcon: ({ color, size }) => (
+            <MaterialIcons name="assignment" color={color} size={size} />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="settings"
         options={{
           title: "Settings",

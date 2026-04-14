@@ -8,15 +8,27 @@
     },
     "devices": {
       "$deviceId": {
-        ".read": "auth != null",
-        ".write": "auth != null",
         "live": {
-          ".read": "auth != null",
-          ".write": "true"
+          ".read": "auth != null || query.orderByChild == 'public'",
+          ".write": false
         },
         "commands": {
+          "latest": {
+            ".read": false,
+            ".write": "auth != null || (data == null && newData.child('cmd').val() == 'stop')"
+          }
+        },
+        "history": {
+          ".read": "auth != null",
+          ".write": false
+        },
+        "owner_notes": {
           ".read": "auth != null",
           ".write": "auth != null"
+        },
+        "therapy_events": {
+          ".read": "auth != null",
+          ".write": false
         }
       }
     }

@@ -221,7 +221,7 @@ export default function Pairing() {
               
               // If vest detected but name is missing or empty, use default (so connection has a valid name)
               const displayName = (!d.name || (d.name || "").trim() === "")
-                ? "PAWSOMEBOND-VEST"
+                ? "PAWSOMEBOND-PB-001"
                 : d.name;
               
               return [...safePrev, { ...d, name: displayName }];
@@ -277,12 +277,9 @@ export default function Pairing() {
     if (nameLower === "pawsomebond-vest" ||
         nameLower === "pawsomebond vest" ||
         nameLower.startsWith("pawsomebond") ||
-        (nameLower.includes("pawsomebond") && nameLower.includes("vest")) ||
-        nameLower.includes("pawsomebond-vest") ||
-        nameLower === "") { // Empty name might be vest detected by service UUID
-      // If name is empty but we're checking, it might be a vest detected by service UUID
-      // We'll check if it's actually a vest when connecting
-      return { icon: "🦺", label: "PAWSOMEBOND-VEST", type: "vest" as Role };
+        nameLower.startsWith("pawsomebond") ||
+        nameLower === "") {
+      return { icon: "🦺", label: "PawsomeBond Harness", type: "vest" as Role };
     }
     
     // Check if it's a Polar H10
@@ -345,7 +342,7 @@ export default function Pairing() {
       }
 
       // For vest, ensure we have a proper name even if it was detected by service UUID
-      const deviceName = device.name || (type === "vest" ? "PAWSOMEBOND-VEST" : `${type} device`);
+      const deviceName = device.name || (type === "vest" ? "PAWSOMEBOND-PB-001" : `${type} device`);
 
       const descriptor = {
         ...device,
@@ -536,7 +533,7 @@ export default function Pairing() {
               <View style={styles.empty}>
                 <Text style={styles.emptyText}>No compatible devices found</Text>
                 <Text style={styles.emptySub}>
-                  Looking for: Polar H10 or PAWSOMEBOND-VEST devices
+                  Looking for: Polar H10 or PawsomeBond harness devices
                 </Text>
                 <Text style={[styles.emptySub, { marginTop: 8, fontSize: 12 }]}>
                   Make sure your devices are powered on and nearby. Tap a device to assign its role (Human/Dog/Vest).
