@@ -5,6 +5,7 @@ import {
   sendStopCommand,
   syncDeviceIdToBackend,
   writeLiveTelemetry,
+  normalizeLiveState,
   LiveState,
 } from "../firebase/firebase";
 import auth, { FirebaseAuthTypes } from "@react-native-firebase/auth";
@@ -226,6 +227,13 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!deviceId || deviceId === MOCK_DEVICE_ID) return;
     const onTelemetry = (telemetry: Record<string, unknown>) => {
+      const live = normalizeLiveState(telemetry);
+      if (live) {
+        setLiveState(live);
+        setRawLiveData(telemetry);
+        setLiveReceivedAt(Date.now());
+        setError(null);
+      }
       writeLiveTelemetry(deviceId, telemetry).catch(() => {});
     };
     bleManager.on("telemetry", onTelemetry);

@@ -5,6 +5,7 @@
 import { BleManager, Device } from "react-native-ble-plx";
 import { Buffer } from "buffer";
 import { Alert, Platform, PermissionsAndroid } from "react-native";
+import database from "@react-native-firebase/database";
 import SimpleEmitter from "./SimpleEmitter";
 import {
   calculateHumanCoherence,
@@ -244,6 +245,18 @@ class BLEManagerReal extends SimpleEmitter {
     console.log(line);
   }
 
+  private async bridgeTelemetryToFirebase(telemetry: Record<string, unknown>): Promise<void> {
+    try {
+      // Trial default per hardware contract; prefer saved vest deviceId when available.
+      const pairedName = this.pairedDescriptors.vest?.name ?? "";
+      const match = pairedName.match(/PB-\d+/i);
+      const deviceId = (match?.[0] ?? "PB-001").toUpperCase();
+      await database().ref(`/devices/${deviceId}/live`).set(telemetry);
+    } catch (e: any) {
+      this.log(`Telemetry Firebase bridge error: ${e?.message ?? e}`);
+    }
+  }
+
   // ----------------------------------------------------------
   // ANDROID PERMISSIONS
   // ----------------------------------------------------------
@@ -361,9 +374,7 @@ class BLEManagerReal extends SimpleEmitter {
           const isPolarH10ByName = nameLower.includes("polar h10") ||
             nameLower.includes("polar h 10");
           
-          const isVestByName = nameLower.startsWith("pawsomebond-") ||
-            nameLower.startsWith("pawsomebond ") ||
-            nameLower === "pawsomebond";
+          const isVestByName = nameLower.includes("pawsomebond");
 
           // Combine service UUID and name matching
           const isPolarH10 = isPolarH10ByName || isPolarByService;
@@ -575,6 +586,16 @@ class BLEManagerReal extends SimpleEmitter {
 
   isRoleConnected(role: Role) {
     return !!this.connectedRoles[role];
+  }
+
+  async isVestConnected(): Promise<boolean> {
+    const vest = this.devices.vest;
+    if (!vest) return false;
+    try {
+      return await vest.isConnected();
+    } catch {
+      return !!this.connectedRoles.vest;
+    }
   }
 
   // ----------------------------------------------------------
@@ -1576,7 +1597,9 @@ class BLEManagerReal extends SimpleEmitter {
             const raw = Buffer.from(characteristic.value, "base64").toString("utf-8").trim();
             try {
               const telemetry = JSON.parse(raw);
+              console.log("[BLE] beb54842 telemetry raw:", raw);
               this.emit("telemetry", telemetry);
+              this.bridgeTelemetryToFirebase(telemetry).catch(() => {});
             } catch {
               this.log(`Telemetry parse error: ${raw.substring(0, 80)}`);
             }

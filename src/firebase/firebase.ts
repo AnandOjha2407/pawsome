@@ -254,29 +254,33 @@ export function subscribeLiveState(
     return () => {};
   }
   const id = deviceId.trim();
-  const path = `${id}/live`;
-  const ref = database().ref(path);
+  const paths = [`${id}/live`, `devices/${id}/live`];
+  const refs = paths.map((p) => database().ref(p));
+  let hasDeliveredData = false;
   const callback = (snapshot: any) => {
     try {
-      if (__DEV__) console.log("GOT DATA:", path, snapshot.val());
+      if (__DEV__) console.log("GOT DATA:", snapshot?.ref?.toString?.() ?? "live-path", snapshot.val());
       const val = snapshot.val();
       if (!val || typeof val !== "object") {
-        onData(null, null);
+        if (!hasDeliveredData) onData(null, null);
         return;
       }
       const raw = val as Record<string, unknown>;
       const normalized = normalizeLiveState(raw);
+      hasDeliveredData = true;
       onData(normalized, raw);
     } catch (e) {
       if (__DEV__) console.warn("[subscribeLiveState] callback error:", e);
       onData(null, null);
     }
   };
-  ref.on("value", callback);
+  refs.forEach((ref) => ref.on("value", callback));
   return () => {
-    try {
-      ref.off("value", callback);
-    } catch (_) {}
+    refs.forEach((ref) => {
+      try {
+        ref.off("value", callback);
+      } catch (_) {}
+    });
   };
 }
 
@@ -318,8 +322,10 @@ export async function writeLiveTelemetry(
   const id = deviceId.trim();
   if (!id) return;
   try {
-    const ref = database().ref(`${id}/live`);
-    await ref.update(telemetry);
+    await Promise.all([
+      database().ref(`${id}/live`).update(telemetry),
+      database().ref(`devices/${id}/live`).update(telemetry),
+    ]);
   } catch (e) {
     if (__DEV__) console.warn("[writeLiveTelemetry] error:", e);
   }

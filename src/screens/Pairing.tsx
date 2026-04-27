@@ -14,6 +14,7 @@ import {
   Linking,
   PermissionsAndroid,
   Modal,
+  AppState,
 } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useRoute } from "@react-navigation/native";
@@ -46,6 +47,18 @@ export default function Pairing() {
   const [devices, setDevices] = useState<DeviceItem[]>([]);
   const [btOn, setBtOn] = useState(true);
   const [connectingDeviceId, setConnectingDeviceId] = useState<string | null>(null);
+
+  const routeToDashboardIfVestConnected = async () => {
+    try {
+      const isVestConnected = await (bleManager as any).isVestConnected?.();
+      if (isVestConnected) {
+        stopScan();
+        router.replace("/dashboard");
+      }
+    } catch {
+      // Ignore resume-check failures; scan screen remains fallback.
+    }
+  };
 
   // --------------------------------------------------------------------------------------
   // INIT - Check Bluetooth state and request permissions
@@ -175,6 +188,17 @@ export default function Pairing() {
     return () => {
       if (bleManager.off) bleManager.off("data", onData);
     };
+  }, []);
+
+  useEffect(() => {
+    routeToDashboardIfVestConnected();
+    const sub = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "active") {
+        routeToDashboardIfVestConnected();
+      }
+    });
+    return () => sub.remove();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // --------------------------------------------------------------------------------------
