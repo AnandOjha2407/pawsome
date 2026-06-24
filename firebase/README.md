@@ -7,3 +7,5 @@ These files are **reference copies**. They are not auto-deployed. Deploy them fr
 - **database.rules.json** — Paste in Realtime Database → Rules. Allows app to read `devices/{deviceId}/live` and write commands; `live` write is open so harness/backend can write.
 
 Your app lives in **doggpt/** (this folder’s parent). The app uses **android/app/google-services.json** to connect to the Firebase project.
+
+jhg
